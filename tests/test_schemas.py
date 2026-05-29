@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from aimemory.schemas.memory import MemorySearchRequest, MemoryUpsertRequest
+from aimemory.schemas.memory import MemoryContextRequest, MemorySearchRequest, MemoryUpsertRequest
 
 
 def test_memory_upsert_request_accepts_title_and_content() -> None:
@@ -23,6 +23,28 @@ def test_search_request_rejects_inverted_time_window() -> None:
 
     with pytest.raises(ValidationError):
         MemorySearchRequest(
+            agent_id="assistant",
+            query="preference",
+            since=now,
+            until=now - timedelta(days=1),
+        )
+
+
+def test_context_request_defaults_and_limits() -> None:
+    payload = MemoryContextRequest(agent_id="assistant", query="用户偏好")
+
+    assert payload.top_k == 8
+    assert payload.max_chars == 3000
+
+    with pytest.raises(ValidationError):
+        MemoryContextRequest(agent_id="assistant", query="用户偏好", max_chars=12001)
+
+
+def test_context_request_rejects_inverted_time_window() -> None:
+    now = datetime.now(UTC)
+
+    with pytest.raises(ValidationError):
+        MemoryContextRequest(
             agent_id="assistant",
             query="preference",
             since=now,

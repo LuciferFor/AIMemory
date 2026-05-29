@@ -67,6 +67,44 @@ class MemorySearchResponse(BaseModel):
     items: list[MemorySearchItem]
 
 
+class MemoryContextRequest(BaseModel):
+    agent_id: AgentId
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    top_k: int = Field(default=8, ge=1, le=50)
+    metadata_filter: dict[str, Any] | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    max_chars: int = Field(default=3000, ge=1, le=12000)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> "MemoryContextRequest":
+        if self.since and self.until and self.since > self.until:
+            raise ValueError("since must be before until")
+        return self
+
+
+class MemoryContextItem(BaseModel):
+    memory_id: UUID
+    external_id: str
+    title: str
+    score: float
+    embedding_status: str
+
+
+class MemoryContextResponse(BaseModel):
+    context_text: str
+    items: list[MemoryContextItem]
+    usage_hint: dict[str, Any]
+
+
+class MemoryWritePolicyResponse(BaseModel):
+    prompt: str
+    output_schema: dict[str, Any]
+    required_fields: list[str]
+    rules: list[str]
+    forbidden: list[str]
+
+
 class MemoryDeleteRequest(BaseModel):
     agent_id: AgentId
     external_id: ExternalId

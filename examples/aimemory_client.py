@@ -62,6 +62,21 @@ def search_memories(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     return response.get("items", [])
 
 
+def build_server_memory_context(query: str, top_k: int = 8, max_chars: int = 3000) -> str:
+    """Ask AIMemory to return the standard prompt-ready memory context."""
+    response = _request(
+        "POST",
+        "/v1/memories/context",
+        {
+            "agent_id": AGENT_ID,
+            "query": query,
+            "top_k": top_k,
+            "max_chars": max_chars,
+        },
+    )
+    return response.get("context_text", "")
+
+
 def build_memory_context(query: str, top_k: int = 5) -> str:
     """Return a compact context block that can be inserted into a model prompt."""
     memories = search_memories(query, top_k=top_k)
@@ -113,6 +128,11 @@ def delete_memory(external_id: str) -> bool:
     return bool(response.get("deleted"))
 
 
+def get_write_policy() -> dict[str, Any]:
+    """Return the standard prompt for extracting memories before context compression."""
+    return _request("GET", "/v1/memories/write-policy")
+
+
 if __name__ == "__main__":
     # Tiny smoke example. Remove this block if your AI runtime imports the module.
-    print(build_memory_context("用户有什么偏好", top_k=3))
+    print(build_server_memory_context("用户有什么偏好", top_k=3))

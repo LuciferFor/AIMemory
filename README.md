@@ -50,6 +50,26 @@ curl -X POST http://localhost:10011/v1/memories/search \
   -d '{"agent_id":"assistant","query":"short replies preference","top_k":5}'
 ```
 
+Build prompt-ready memory context:
+
+```bash
+curl -X POST http://localhost:10011/v1/memories/context \
+  -H "Authorization: Bearer <api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"assistant","query":"short replies preference","top_k":8,"max_chars":3000}'
+```
+
+The response includes `context_text`, which can be inserted into the model's
+system/developer context before the current user message. AIMemory does not call
+the main language model; clients still control the model request.
+
+Get the standard write policy for extracting memories before context compression:
+
+```bash
+curl -X GET http://localhost:10011/v1/memories/write-policy \
+  -H "Authorization: Bearer <api_key>"
+```
+
 Delete memory:
 
 ```bash
