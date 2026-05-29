@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "AIMemory 管理后台" }}</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">A</span>
+        <span>AIMemory 管理后台</span>
+      </div>
+      <nav class="nav">
+        <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">仪表盘</a>
+        <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') else '' }}">用户</a>
+        <a href="/admin/api-keys" class="{{ 'active' if request.url.path.startswith('/admin/api-keys') else '' }}">接口密钥</a>
+        <a href="/admin/memories" class="{{ 'active' if request.url.path.startswith('/admin/memories') else '' }}">记忆</a>
+        <a href="/admin/jobs" class="{{ 'active' if request.url.path.startswith('/admin/jobs') else '' }}">任务</a>
+        <a href="/admin/health" class="{{ 'active' if request.url.path.startswith('/admin/health') else '' }}">健康检查</a>
+      </nav>
+      <form method="post" action="/admin/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">退出登录</button>
+      </form>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1>{{ heading }}</h1>
+          {% if subheading %}<p>{{ subheading }}</p>{% endif %}
+        </div>
+        <span class="user-chip">{{ admin_username }}</span>
+      </header>
+      {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+      {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script>
+    document.addEventListener("submit", function (event) {
+      const form = event.target;
+      if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+        event.preventDefault();
+      }
+    });
+  </script>
+</body>
+</html>

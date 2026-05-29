@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set title = "接口密钥 - AIMemory 管理后台" %}
+{% set heading = "接口密钥" %}
+{% set subheading = "客户端访问凭证" %}
+{% block content %}
+{% if created_key %}
+<section class="secret-box">
+  <span>新接口密钥</span>
+  <code>{{ created_key }}</code>
+</section>
+{% endif %}
+
+<section class="panel">
+  <form method="post" action="/admin/api-keys" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      用户
+      <select name="user_id" required>
+        <option value="">选择用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if selected_user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      标签
+      <input name="label" maxlength="128">
+    </label>
+    <button type="submit" class="primary">创建密钥</button>
+  </form>
+</section>
+
+<section class="panel">
+  <form method="get" action="/admin/api-keys" class="filter-bar">
+    <select name="user_id">
+      <option value="">全部用户</option>
+      {% for user in users %}
+      <option value="{{ user.id }}" {{ "selected" if selected_user_id == user.id|string else "" }}>{{ user.name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">筛选</button>
+  </form>
+  <table>
+    <thead><tr><th>用户</th><th>前缀</th><th>标签</th><th>状态</th><th>最后使用</th><th>创建时间</th><th></th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      {% set key = row.api_key %}
+      <tr>
+        <td>{{ row.user_name }}</td>
+        <td><code>{{ key.key_prefix }}</code></td>
+        <td>{{ key.label or "" }}</td>
+        <td><span class="badge {{ 'failed' if key.revoked_at else 'ready' }}">{{ "已吊销" if key.revoked_at else "启用" }}</span></td>
+        <td>{{ key.last_used_at or "" }}</td>
+        <td>{{ key.created_at }}</td>
+        <td class="actions">
+          {% if not key.revoked_at %}
+          <form method="post" action="/admin/api-keys/{{ key.id }}/revoke" data-confirm="确认吊销这个接口密钥？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">吊销</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">暂无接口密钥</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.responses import RedirectResponse
 
 from aimemory.api.deps import get_current_user
 from aimemory.db.session import get_db
@@ -107,6 +108,12 @@ def delete_memory(
 
 
 health_router = APIRouter(tags=["health"])
+
+
+@health_router.get("/", include_in_schema=False)
+@health_router.head("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/admin/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @health_router.get("/healthz")

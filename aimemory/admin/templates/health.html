@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% set title = "健康检查 - AIMemory 管理后台" %}
+{% set heading = "健康检查" %}
+{% set subheading = "运行时检查" %}
+{% block content %}
+<section class="panel">
+  <table>
+    <thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
+    <tbody>
+      {% for check in checks %}
+      <tr>
+        <td>{{ check.name }}</td>
+        <td><span class="badge {{ check.status }}">{{ status_label(check.status) }}</span></td>
+        <td>{{ check.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

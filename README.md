@@ -30,7 +30,7 @@ docker compose exec api aimemory create-api-key default --label local
 Insert memory:
 
 ```bash
-curl -X POST http://localhost:8000/v1/memories \
+curl -X POST http://localhost:10011/v1/memories \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -44,7 +44,7 @@ curl -X POST http://localhost:8000/v1/memories \
 Search memory:
 
 ```bash
-curl -X POST http://localhost:8000/v1/memories/search \
+curl -X POST http://localhost:10011/v1/memories/search \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"assistant","query":"short replies preference","top_k":5}'
@@ -53,11 +53,30 @@ curl -X POST http://localhost:8000/v1/memories/search \
 Delete memory:
 
 ```bash
-curl -X DELETE http://localhost:8000/v1/memories \
+curl -X DELETE http://localhost:10011/v1/memories \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"assistant","external_id":"mem-001"}'
 ```
+
+## Admin UI
+
+The admin web UI runs on the same service port:
+
+```text
+http://localhost:10011/admin/login
+```
+
+Set these values before exposing it:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<strong-password>
+ADMIN_SESSION_SECRET=<random-secret>
+ADMIN_COOKIE_SECURE=false
+```
+
+Use `ADMIN_COOKIE_SECURE=true` after putting the service behind HTTPS.
 
 ## Configuration
 
@@ -72,6 +91,7 @@ Important environment variables:
 - `EMBEDDING_MODEL`: embedding model name.
 - `EMBEDDING_DIM`: one fixed vector dimension for this deployment.
 - `EMBEDDING_INCLUDE_DIMENSIONS`: send `dimensions` in embedding requests when supported.
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`: admin web login.
 
 ## Development
 
@@ -86,7 +106,7 @@ For local PostgreSQL:
 
 ```bash
 alembic upgrade head
-uvicorn aimemory.main:create_app --factory --reload
+uvicorn aimemory.main:create_app --factory --reload --port 10011
 celery -A aimemory.worker.celery_app:celery_app worker --loglevel=INFO
 ```
 

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set title = "任务 - AIMemory 管理后台" %}
+{% set heading = "向量任务" %}
+{% set subheading = "队列状态与重试" %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/admin/jobs" class="filter-bar">
+    <select name="job_status">
+      <option value="">全部状态</option>
+      {% for status_name in ["pending", "running", "retrying", "succeeded", "failed", "skipped"] %}
+      <option value="{{ status_name }}" {{ "selected" if filters.job_status == status_name else "" }}>{{ status_label(status_name) }}</option>
+      {% endfor %}
+    </select>
+    <input type="number" name="limit" min="1" max="500" value="{{ filters.limit }}">
+    <button type="submit">筛选</button>
+  </form>
+  <table>
+    <thead><tr><th>任务</th><th>记忆</th><th>用户</th><th>状态</th><th>尝试次数</th><th>错误</th><th>更新时间</th><th></th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      {% set job = row.job %}
+      <tr>
+        <td><code>{{ job.id }}</code></td>
+        <td>{{ row.agent_id }} / <code>{{ row.external_id }}</code></td>
+        <td>{{ row.user_name }}</td>
+        <td><span class="badge {{ job.status }}">{{ status_label(job.status) }}</span></td>
+        <td>{{ job.attempts }}</td>
+        <td class="truncate">{{ job.last_error or "" }}</td>
+        <td>{{ job.updated_at }}</td>
+        <td class="actions">
+          {% if job.status in ["pending", "retrying", "failed", "skipped"] %}
+          <form method="post" action="/admin/jobs/{{ job.id }}/requeue">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">重新入队</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="empty">暂无任务</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

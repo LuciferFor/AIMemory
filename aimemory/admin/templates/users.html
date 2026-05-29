@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set title = "用户 - AIMemory 管理后台" %}
+{% set heading = "用户" %}
+{% set subheading = "账号和访问状态" %}
+{% block content %}
+<section class="panel">
+  <form method="post" action="/admin/users" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      用户名
+      <input name="name" maxlength="128" required>
+    </label>
+    <button type="submit" class="primary">创建用户</button>
+  </form>
+</section>
+
+<section class="panel">
+  <table>
+    <thead><tr><th>用户名</th><th>ID</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+    <tbody>
+      {% for user in users %}
+      <tr>
+        <td>{{ user.name }}</td>
+        <td><code>{{ user.id }}</code></td>
+        <td><span class="badge {{ 'ready' if user.is_active else 'failed' }}">{{ "启用" if user.is_active else "禁用" }}</span></td>
+        <td>{{ user.created_at }}</td>
+        <td class="actions">
+          <form method="post" action="/admin/users/{{ user.id }}/toggle" data-confirm="确认切换这个用户的状态？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">{{ "禁用" if user.is_active else "启用" }}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">暂无用户</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

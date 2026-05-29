@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% set title = "记忆 - AIMemory 管理后台" %}
+{% set heading = "记忆" %}
+{% set subheading = "检索与维护" %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/admin/memories" class="filter-grid">
+    <label>用户
+      <select name="user_id">
+        <option value="">全部用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>智能体
+      <select name="agent_id">
+        <option value="">全部智能体</option>
+        {% for agent in agents %}
+        <option value="{{ agent }}" {{ "selected" if filters.agent_id == agent else "" }}>{{ agent }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>关键词
+      <input name="q" value="{{ filters.q }}">
+    </label>
+    <label>向量状态
+      <select name="embedding_status">
+        <option value="">全部</option>
+        {% for status_name in ["pending", "ready", "failed"] %}
+        <option value="{{ status_name }}" {{ "selected" if filters.embedding_status == status_name else "" }}>{{ status_label(status_name) }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>删除状态
+      <select name="deleted">
+        {% for mode in ["active", "deleted", "all"] %}
+        <option value="{{ mode }}" {{ "selected" if filters.deleted == mode else "" }}>{{ deleted_mode_label(mode) }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>开始日期
+      <input type="date" name="since" value="{{ filters.since }}">
+    </label>
+    <label>结束日期
+      <input type="date" name="until" value="{{ filters.until }}">
+    </label>
+    <label>数量上限
+      <input type="number" name="limit" min="1" max="200" value="{{ filters.limit }}">
+    </label>
+    <button type="submit" class="primary">搜索</button>
+  </form>
+</section>
+
+<section class="memory-list">
+  {% for row in rows %}
+  {% set memory = row.memory %}
+  <article class="memory-item">
+    <header>
+      <div>
+        <h2>{{ memory.title }}</h2>
+        <p>{{ row.user_name }} / {{ memory.agent_id }} / <code>{{ memory.external_id }}</code></p>
+      </div>
+      <span class="badge {{ memory.embedding_status }}">{{ status_label(memory.embedding_status) }}</span>
+    </header>
+    <pre>{{ memory.content }}</pre>
+    <details>
+      <summary>元数据</summary>
+      <pre>{{ memory.metadata_json }}</pre>
+    </details>
+    <footer>
+      <span>创建时间 {{ memory.created_at }}</span>
+      <span>更新时间 {{ memory.updated_at }}</span>
+      {% if memory.deleted_at %}<span>删除时间 {{ memory.deleted_at }}</span>{% endif %}
+      <div class="actions">
+        {% if not memory.deleted_at %}
+        <form method="post" action="/admin/memories/{{ memory.id }}/requeue">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit">重建向量</button>
+        </form>
+        <form method="post" action="/admin/memories/{{ memory.id }}/delete" data-confirm="确认删除这条记忆？">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="danger">删除</button>
+        </form>
+        {% endif %}
+      </div>
+    </footer>
+  </article>
+  {% else %}
+  <div class="panel empty">暂无记忆</div>
+  {% endfor %}
+</section>
+{% endblock %}

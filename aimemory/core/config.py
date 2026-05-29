@@ -22,6 +22,12 @@ class Settings(BaseSettings):
 
     api_key_prefix: str = "aim_"
 
+    admin_username: str = "admin"
+    admin_password: str = "change-me"
+    admin_session_secret: str = "change-me-session-secret"
+    admin_session_max_age_seconds: int = 43200
+    admin_cookie_secure: bool = False
+
     embedding_base_url: str = ""
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-3-large"
