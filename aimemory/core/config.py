@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     app_name: str = "AIMemory"
     environment: str = "development"
+    log_level: str = "INFO"
+    log_format: str = "json"
+    slow_request_ms: int = Field(default=1000, ge=1)
+    slow_embedding_ms: int = Field(default=3000, ge=1)
 
     database_url: str = "postgresql+psycopg://aimemory:aimemory@localhost:5432/aimemory"
     redis_url: str = "redis://localhost:6379/0"

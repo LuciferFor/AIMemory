@@ -1,8 +1,10 @@
 from celery import Celery
 
 from aimemory.core.config import get_settings
+from aimemory.core.logging import configure_logging
 
 settings = get_settings()
+configure_logging(settings)
 
 celery_app = Celery(
     "aimemory",
@@ -19,4 +21,5 @@ celery_app.conf.update(
     enable_utc=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    worker_hijack_root_logger=False,
 )

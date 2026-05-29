@@ -112,6 +112,27 @@ Important environment variables:
 - `EMBEDDING_DIM`: one fixed vector dimension for this deployment.
 - `EMBEDDING_INCLUDE_DIMENSIONS`: send `dimensions` in embedding requests when supported.
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`: admin web login.
+- `LOG_LEVEL`: logging level, default `INFO`.
+- `LOG_FORMAT`: `json` for Docker/production logs, or `text` for local debugging.
+- `SLOW_REQUEST_MS`: request duration threshold logged as warning.
+- `SLOW_EMBEDDING_MS`: embedding request duration threshold logged as warning.
+
+## Logging
+
+API and worker logs are written to stdout. In Docker, use:
+
+```bash
+docker compose logs -f api
+docker compose logs -f worker
+```
+
+Each API response includes `X-Request-ID`; pass the same header from a client to
+trace a request through logs. Normal `/healthz` and `/admin/static/*` requests are
+not logged at INFO level.
+
+Logs intentionally do not include API keys, admin passwords, embedding keys,
+full memory content, metadata bodies, embedding input text, or vector values.
+Business logs include IDs, status, counts, timings, and embedding job results.
 
 ## Development
 

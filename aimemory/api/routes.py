@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -100,20 +101,53 @@ def write_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryUpsertResponse:
+    start = time.perf_counter()
+    retried_after_integrity_error = False
     try:
         memory, action = upsert_memory(db, current_user.id, payload)
         job = create_embedding_job(db, memory.id)
         db.commit()
     except IntegrityError:
+        retried_after_integrity_error = True
         db.rollback()
         memory, action = upsert_memory(db, current_user.id, payload)
         job = create_embedding_job(db, memory.id)
         db.commit()
 
+    embedding_job_enqueued = True
     try:
         generate_memory_embedding.delay(str(memory.id), str(job.id))
     except Exception as exc:  # Celery broker failures should not lose the memory.
-        logger.warning("Failed to enqueue embedding job for memory %s: %s", memory.id, exc)
+        embedding_job_enqueued = False
+        logger.warning(
+            "memory.embedding_enqueue_failed",
+            extra={
+                "event": "memory.embedding_enqueue_failed",
+                "user_id": current_user.id,
+                "agent_id": payload.agent_id,
+                "external_id": payload.external_id,
+                "memory_id": memory.id,
+                "embedding_job_id": job.id,
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
+        )
+
+    logger.info(
+        "memory.write",
+        extra={
+            "event": "memory.write",
+            "user_id": current_user.id,
+            "agent_id": payload.agent_id,
+            "external_id": payload.external_id,
+            "action": action,
+            "memory_id": memory.id,
+            "embedding_job_id": job.id,
+            "embedding_job_enqueued": embedding_job_enqueued,
+            "retried_after_integrity_error": retried_after_integrity_error,
+            "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+        },
+    )
 
     return MemoryUpsertResponse(
         memory_id=memory.id,
@@ -129,7 +163,19 @@ def search_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemorySearchResponse:
-    results = _search_results(db, current_user, payload)
+    results, used_vector, duration_ms = _search_results(db, current_user, payload)
+    logger.info(
+        "memory.search",
+        extra={
+            "event": "memory.search",
+            "user_id": current_user.id,
+            "agent_id": payload.agent_id,
+            "top_k": payload.top_k,
+            "result_count": len(results),
+            "used_vector": used_vector,
+            "duration_ms": duration_ms,
+        },
+    )
     return MemorySearchResponse(
         items=[
             MemorySearchItem(
@@ -155,9 +201,24 @@ def build_memory_context(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
-    results = _search_results(db, current_user, payload)
+    results, used_vector, search_duration_ms = _search_results(db, current_user, payload)
+    context_text = build_context_text(results, payload.max_chars)
+    logger.info(
+        "memory.context",
+        extra={
+            "event": "memory.context",
+            "user_id": current_user.id,
+            "agent_id": payload.agent_id,
+            "top_k": payload.top_k,
+            "result_count": len(results),
+            "used_vector": used_vector,
+            "context_chars": len(context_text),
+            "truncated": bool(context_text) and len(context_text) >= payload.max_chars,
+            "duration_ms": search_duration_ms,
+        },
+    )
     return MemoryContextResponse(
-        context_text=build_context_text(results, payload.max_chars),
+        context_text=context_text,
         items=[
             MemoryContextItem(
                 memory_id=result.memory_id,
@@ -176,7 +237,13 @@ def build_memory_context(
 def get_write_policy(
     current_user: User = Depends(get_current_user),
 ) -> MemoryWritePolicyResponse:
-    _ = current_user
+    logger.info(
+        "memory.write_policy",
+        extra={
+            "event": "memory.write_policy",
+            "user_id": current_user.id,
+        },
+    )
     return MemoryWritePolicyResponse(
         prompt=WRITE_POLICY_PROMPT,
         output_schema=WRITE_POLICY_OUTPUT_SCHEMA,
@@ -192,8 +259,20 @@ def delete_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryDeleteResponse:
+    start = time.perf_counter()
     deleted = soft_delete_memory(db, current_user.id, payload.agent_id, payload.external_id)
     db.commit()
+    logger.info(
+        "memory.delete",
+        extra={
+            "event": "memory.delete",
+            "user_id": current_user.id,
+            "agent_id": payload.agent_id,
+            "external_id": payload.external_id,
+            "deleted": deleted,
+            "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+        },
+    )
     return MemoryDeleteResponse(deleted=deleted)
 
 
@@ -202,15 +281,26 @@ def _search_results(
     current_user: User,
     payload: MemorySearchRequest | MemoryContextRequest,
 ):
+    start = time.perf_counter()
     normalized_query = normalize_query(payload.query)
     query_vector = None
 
     try:
         query_vector = OpenAICompatibleEmbeddingClient().embed(normalized_query)
     except EmbeddingProviderError as exc:
-        logger.info("Embedding search fallback to text-only: %s", exc)
+        logger.info(
+            "memory.search_embedding_fallback",
+            extra={
+                "event": "memory.search_embedding_fallback",
+                "user_id": current_user.id,
+                "agent_id": payload.agent_id,
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
+        )
 
-    return search_memories(db, current_user.id, payload, normalized_query, query_vector)
+    results = search_memories(db, current_user.id, payload, normalized_query, query_vector)
+    return results, query_vector is not None, round((time.perf_counter() - start) * 1000, 2)
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:
