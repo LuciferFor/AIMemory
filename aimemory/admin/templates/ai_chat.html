@@ -1,118 +1,161 @@
 {% extends "base.html" %}
-{% set title = "AI 对话 - AIMemory 管理后台" %}
+{% set title = (thread.title ~ " - " if thread else "") ~ "AI 对话 - AIMemory 管理后台" %}
 {% set heading = "AI 对话" %}
 {% set subheading = "只读查询、配置排查与项目问答" %}
 {% block content %}
 {% if not ai_configured %}
-<div class="notice error">AI 配置未启用或 API Key 未保存。请先到“AI 整理”页面配置 OpenAI-compatible API。</div>
+<div class="notice error">AI 配置未启用或 API Key 未保存。请先到“AI 设置”页面配置 OpenAI-compatible API。</div>
 {% endif %}
 {% if ai_chat_error %}
 <div class="notice error">{{ ai_chat_error }}</div>
 {% endif %}
 
-<section class="ai-chat-layout">
-  <aside class="panel ai-chat-sidebar">
-    <form method="post" action="/admin/ai-chat" class="new-chat-form">
+<section class="ai-chat-page">
+  <aside class="ai-thread-sidebar" aria-label="AI 对话历史">
+    <header class="ai-thread-head">
+      <div>
+        <strong>AI 对话</strong>
+        <span>只读查询和项目排查</span>
+      </div>
+      <a href="/admin/ai-settings" title="AI 设置" class="ai-thread-icon-link">设置</a>
+    </header>
+
+    <form method="post" action="/admin/ai-chat" class="ai-new-thread-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="primary">新对话</button>
+      <button type="submit" class="ai-new-chat-button">开启新对话</button>
     </form>
-    <div class="chat-thread-list">
-      {% for item in threads %}
-      <a class="chat-thread {{ 'active' if thread and item.id == thread.id else '' }}" href="/admin/ai-chat/{{ item.id }}">
-        <strong>{{ item.title }}</strong>
-        <span>{{ compact_datetime(item.updated_at) }}</span>
-      </a>
-      {% else %}
-      <p class="empty">暂无历史对话</p>
-      {% endfor %}
+
+    <div class="ai-thread-search" aria-hidden="true">搜索历史对话</div>
+
+    <div class="ai-thread-groups">
+      <p class="ai-thread-period">最近对话</p>
+      <div class="ai-thread-list">
+        {% for item in threads %}
+        <div class="ai-thread-row {{ 'active' if thread and item.id == thread.id else '' }}">
+          <a class="ai-thread-item" href="/admin/ai-chat/{{ item.id }}">
+            <span>{{ item.title }}</span>
+            <small>{{ compact_datetime(item.updated_at) }}</small>
+          </a>
+          <form method="post" action="/admin/ai-chat/{{ item.id }}/delete" data-confirm="确定删除这个 AI 对话吗？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="ai-thread-delete" title="删除对话">删除</button>
+          </form>
+        </div>
+        {% else %}
+        <p class="ai-empty-sidebar">暂无历史对话</p>
+        {% endfor %}
+      </div>
     </div>
   </aside>
 
-  <section class="panel ai-chat-main">
+  <section class="ai-chat-workspace">
     {% if thread %}
-    <header class="ai-chat-head">
+    <header class="ai-chat-workspace-head">
       <div>
         <h2>{{ thread.title }}</h2>
-        <p class="muted">模型 {{ ai_model or "未配置" }}。AI 可自动执行受限只读 SELECT 查询，不会写入数据库。</p>
+        <p>模型 {{ ai_model or "未配置" }} · 自动只读 SQL · 不会写入数据库</p>
       </div>
     </header>
 
-    <div class="chat-message-list">
-      {% for message in thread.messages %}
-      <article class="chat-message {{ message.role }}">
-        <header>
-          <strong>{{ "管理员" if message.role == "user" else "AI" }}</strong>
-          <span>{{ compact_datetime(message.created_at) }}</span>
-          {% if message.total_tokens %}<code>{{ message.total_tokens }} tokens</code>{% endif %}
-        </header>
-        <div class="chat-content">{{ message.content }}</div>
-        {% if message.metadata_json and message.metadata_json.get("sql_results") %}
-        <div class="sql-result-list">
-          {% for result in message.metadata_json.get("sql_results", []) %}
-          <details class="sql-result">
-            <summary>
-              <span>{{ result.get("title") or "只读查询" }}</span>
-              <span class="badge {{ 'ready' if result.get('status') == 'ok' else 'failed' }}">{{ "成功" if result.get("status") == "ok" else "失败" }}</span>
-              <span class="muted">{{ result.get("row_count", 0) }} 行</span>
-            </summary>
-            {% if result.get("purpose") %}<p class="muted">{{ result.get("purpose") }}</p>{% endif %}
-            <pre>{{ result.get("sql") }}</pre>
-            {% if result.get("error") %}
-            <div class="notice error">{{ result.get("error") }}</div>
-            {% elif result.get("rows") %}
-            <div class="sql-table-wrap">
-              <table class="sql-result-table">
-                <thead>
-                  <tr>
-                    {% for column in result.get("columns", []) %}
-                    <th>{{ column }}</th>
-                    {% endfor %}
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for row in result.get("rows", []) %}
-                  <tr>
-                    {% for column in result.get("columns", []) %}
-                    <td>{{ row.get(column) }}</td>
-                    {% endfor %}
-                  </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
+    <section class="ai-message-area" aria-label="对话内容">
+      <div class="ai-message-list">
+        {% for message in thread.messages %}
+        <article class="ai-message-row {{ message.role }}">
+          <div class="ai-message-avatar">{{ "你" if message.role == "user" else "AI" }}</div>
+          <div class="ai-message-card">
+            <header>
+              <strong>{{ "管理员" if message.role == "user" else "AIMemory AI" }}</strong>
+              <span>{{ compact_datetime(message.created_at) }}</span>
+              {% if message.total_tokens %}<code>{{ message.total_tokens }} tokens</code>{% endif %}
+            </header>
+            <div class="ai-message-text">{{ message.content }}</div>
+            {% if message.metadata_json and message.metadata_json.get("sql_results") %}
+            <div class="ai-sql-list">
+              {% for result in message.metadata_json.get("sql_results", []) %}
+              <details class="ai-sql-card">
+                <summary>
+                  <span>{{ result.get("title") or "只读查询" }}</span>
+                  <span class="ai-sql-status {{ 'ok' if result.get('status') == 'ok' else 'failed' }}">{{ "成功" if result.get("status") == "ok" else "失败" }}</span>
+                  <span>{{ result.get("row_count", 0) }} 行</span>
+                </summary>
+                {% if result.get("purpose") %}<p>{{ result.get("purpose") }}</p>{% endif %}
+                <pre>{{ result.get("sql") }}</pre>
+                {% if result.get("error") %}
+                <div class="notice error">{{ result.get("error") }}</div>
+                {% elif result.get("rows") %}
+                <div class="ai-sql-table-wrap">
+                  <table class="ai-sql-table">
+                    <thead>
+                      <tr>
+                        {% for column in result.get("columns", []) %}
+                        <th>{{ column }}</th>
+                        {% endfor %}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in result.get("rows", []) %}
+                      <tr>
+                        {% for column in result.get("columns", []) %}
+                        <td>{{ row.get(column) }}</td>
+                        {% endfor %}
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                {% else %}
+                <p class="ai-muted">查询没有返回行。</p>
+                {% endif %}
+                {% if result.get("truncated") %}<p class="ai-muted">结果已限制展示前 100 行。</p>{% endif %}
+              </details>
+              {% endfor %}
             </div>
-            {% else %}
-            <p class="empty">查询没有返回行。</p>
             {% endif %}
-            {% if result.get("truncated") %}<p class="muted">结果已限制展示前 100 行。</p>{% endif %}
-          </details>
-          {% endfor %}
+            {% if message.error %}<div class="notice error">{{ message.error }}</div>{% endif %}
+          </div>
+        </article>
+        {% else %}
+        <div class="ai-chat-hero in-thread">
+          <span class="ai-hero-mark">A</span>
+          <h2>这个对话还没有消息</h2>
+          <p>问它项目配置、数据库结构、请求日志或记忆分类，它会带着 AIMemory 项目上下文回答。</p>
         </div>
-        {% endif %}
-        {% if message.error %}<div class="notice error">{{ message.error }}</div>{% endif %}
-      </article>
-      {% else %}
-      <p class="empty">这个对话还没有消息。</p>
-      {% endfor %}
-    </div>
+        {% endfor %}
+      </div>
+    </section>
 
-    <form method="post" action="/admin/ai-chat/{{ thread.id }}/messages" class="chat-compose">
+    <form method="post" action="/admin/ai-chat/{{ thread.id }}/messages" class="ai-compose ai-compose-thread">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>给后台 AI 发送问题
-        <textarea name="content" rows="5" maxlength="12000" required placeholder="例如：帮我查一下最近 31.9 请求记忆为什么没有命中；或者列出当前分类和每类记忆数量。"></textarea>
-      </label>
-      <div class="form-actions">
-        <button type="submit" class="primary" {{ "disabled" if not ai_configured else "" }}>发送</button>
+      <textarea name="content" rows="4" maxlength="12000" required placeholder="给 AIMemory AI 发送消息，例如：帮我查一下最近 31.9 请求记忆为什么没有命中。"></textarea>
+      <div class="ai-compose-actions">
+        <div class="ai-compose-chips">
+          <span>只读 SQL</span>
+          <span>项目上下文</span>
+          <span>日志排查</span>
+        </div>
+        <button type="submit" class="ai-send-button" title="发送" {{ "disabled" if not ai_configured else "" }}>↑</button>
       </div>
     </form>
     {% else %}
-    <div class="ai-chat-empty">
-      <h2>开始一个新的后台 AI 对话</h2>
-      <p class="muted">它会固定带 AIMemory 项目说明和数据库结构摘要，可以帮你解释配置、查询日志、分析记忆分类。第一版只允许只读 SQL。</p>
-      <form method="post" action="/admin/ai-chat">
+    <section class="ai-chat-start">
+      <div class="ai-chat-hero">
+        <span class="ai-hero-mark">A</span>
+        <h2>使用后台 AI 开始对话</h2>
+        <p>它会固定带项目说明、表结构摘要和安全规则，适合排查配置、请求日志、分类和记忆数据。</p>
+      </div>
+      <form method="post" action="/admin/ai-chat" class="ai-compose ai-compose-empty">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="primary">新建对话</button>
+        <textarea rows="3" disabled placeholder="新建对话后即可发送问题"></textarea>
+        <div class="ai-compose-actions">
+          <div class="ai-compose-chips">
+            <span>只读 SQL</span>
+            <span>智能排查</span>
+            <span>历史对话</span>
+          </div>
+          <button type="submit" class="ai-send-button" title="开启新对话">＋</button>
+        </div>
       </form>
-    </div>
+    </section>
     {% endif %}
   </section>
 </section>

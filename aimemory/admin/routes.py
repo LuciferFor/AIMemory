@@ -50,7 +50,7 @@ from aimemory.repositories.search_stopwords import (
 )
 from aimemory.services.attachments import attachment_search_text
 from aimemory.services.ai_crypto import AiConfigEncryptionError, decrypt_secret, encrypt_secret, mask_secret
-from aimemory.services.ai_chat import generate_ai_chat_reply, make_thread_title
+from aimemory.services.ai_chat import generate_ai_chat_reply, generate_ai_chat_title, make_thread_title
 from aimemory.services.ai_memory_review import (
     AiMemoryReviewError,
     apply_suggestion,
@@ -66,7 +66,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260531-0145"
+ADMIN_ASSET_VERSION = "20260531-0258"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -800,6 +800,22 @@ def ai_chat_thread_page(thread_id: uuid.UUID, request: Request, db: Session = De
     )
 
 
+@router.post("/ai-chat/{thread_id}/delete")
+async def delete_ai_chat_thread(thread_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    thread = load_ai_chat_thread(db, thread_id, session["sub"])
+    now = utcnow()
+    thread.deleted_at = now
+    thread.updated_at = now
+    db.add(thread)
+    db.commit()
+    return redirect_to("/admin/ai-chat", notice="AI 对话已删除。")
+
+
 @router.post("/ai-chat/{thread_id}/messages")
 async def send_ai_chat_message(thread_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
     session = require_admin_context(request)
@@ -824,9 +840,10 @@ async def send_ai_chat_message(thread_id: uuid.UUID, request: Request, db: Sessi
         return redirect_to(f"/admin/ai-chat/{thread_id}", error=str(exc))
 
     existing_messages = list(thread.messages)
+    is_first_message = not existing_messages
     user_message = AiChatMessage(thread_id=thread.id, role="user", content=content, metadata_json={})
     db.add(user_message)
-    if not existing_messages:
+    if is_first_message:
         thread.title = make_thread_title(content)
     thread.updated_at = utcnow()
     db.add(thread)
@@ -854,6 +871,11 @@ async def send_ai_chat_message(thread_id: uuid.UUID, request: Request, db: Sessi
             error=str(exc)[:2000],
         )
     db.add(assistant_message)
+    if is_first_message:
+        try:
+            thread.title = generate_ai_chat_title(config, api_key, content)
+        except Exception:
+            thread.title = make_thread_title(content)
     thread.updated_at = utcnow()
     db.add(thread)
     db.commit()

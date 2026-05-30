@@ -19,6 +19,7 @@ MAX_SQL_ROWS = 100
 SQL_TIMEOUT_MS = 3000
 MAX_USER_MESSAGE_CHARS = 12000
 MAX_ASSISTANT_CHARS = 24000
+MAX_THREAD_TITLE_CHARS = 18
 SENSITIVE_COLUMN_RE = re.compile(r"(api.*key|key|password|secret|token|encrypted)", re.I)
 FORBIDDEN_SQL_RE = re.compile(
     r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|do|merge|execute|vacuum|refresh|listen|notify|set|reset)\b",
@@ -36,7 +37,40 @@ def make_thread_title(content: str) -> str:
     text_value = " ".join(str(content or "").split())
     if not text_value:
         return "新对话"
-    return text_value[:32]
+    return text_value[:MAX_THREAD_TITLE_CHARS]
+
+
+def clean_thread_title(value: str, *, fallback: str = "新对话") -> str:
+    text_value = strip_json_code_fence(str(value or "")).strip()
+    text_value = re.sub(r"^[\"'“”‘’`]+|[\"'“”‘’`]+$", "", text_value)
+    text_value = re.sub(r"^(标题|对话标题|简短标题)\s*[:：]\s*", "", text_value, flags=re.I)
+    text_value = " ".join(text_value.split())
+    text_value = text_value.strip(" -_，。！？、；：,.!?;:")
+    return text_value[:MAX_THREAD_TITLE_CHARS] if text_value else fallback
+
+
+def generate_ai_chat_title(config: LlmProviderConfig, api_key: str, user_content: str) -> str:
+    fallback = make_thread_title(user_content)
+    result = chat_completion(
+        config,
+        api_key,
+        [
+            {
+                "role": "system",
+                "content": (
+                    "你只负责给后台 AI 对话生成极短标题。"
+                    "根据用户第一句话总结一个中文短标题，尽可能短，最多 8 个汉字或 18 个字符。"
+                    "不要解释，不要加引号，不要加标点，不要输出 JSON。"
+                ),
+            },
+            {"role": "user", "content": str(user_content or "")[:800]},
+        ],
+        response_format=None,
+        max_tokens=32,
+        temperature=0,
+        timeout_ms=3000,
+    )
+    return clean_thread_title(result.content, fallback=fallback)
 
 
 def build_project_context(db: Session) -> str:

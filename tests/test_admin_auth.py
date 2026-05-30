@@ -683,6 +683,7 @@ def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
         }
 
     monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "分类查询")
     client = _client(monkeypatch, db=db)
     csrf = _login_and_csrf(client)
 
@@ -701,6 +702,25 @@ def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
     assert db.thread.messages[-1].content == "这里是 AI 回复。"
     assert db.thread.messages[-1].metadata_json["sql_results"][0]["row_count"] == 1
     assert db.thread.messages[-1].total_tokens == 3
+    assert db.thread.title == "分类查询"
+
+
+def test_admin_can_delete_ai_chat_thread(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/ai-chat/{db.thread_id}/delete",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/ai-chat")
+    assert db.thread.deleted_at is not None
+    assert db.committed is True
 
 
 def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:

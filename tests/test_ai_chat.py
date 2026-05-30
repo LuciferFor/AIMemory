@@ -2,12 +2,17 @@ import json
 
 import pytest
 
-from aimemory.services.ai_chat import AiChatError, make_thread_title, parse_plan, validate_readonly_sql
+from aimemory.services.ai_chat import AiChatError, clean_thread_title, make_thread_title, parse_plan, validate_readonly_sql
 
 
 def test_make_thread_title_truncates_clean_text() -> None:
     assert make_thread_title("  帮我 查一下  请求日志  ") == "帮我 查一下 请求日志"
-    assert len(make_thread_title("这是一条很长的后台 AI 对话标题，用来测试截断逻辑是否稳定，后面还有更多内容")) == 32
+    assert len(make_thread_title("这是一条很长的后台 AI 对话标题，用来测试截断逻辑是否稳定，后面还有更多内容")) == 18
+
+
+def test_clean_thread_title_removes_wrapper_text() -> None:
+    assert clean_thread_title("标题：查询请求日志。") == "查询请求日志"
+    assert clean_thread_title("```json\n分类统计\n```") == "分类统计"
 
 
 def test_parse_plan_accepts_json_code_fence() -> None:
