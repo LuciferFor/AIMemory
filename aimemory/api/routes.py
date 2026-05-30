@@ -19,6 +19,7 @@ from aimemory.repositories.memories import (
     soft_delete_memory,
     upsert_memory,
 )
+from aimemory.repositories.search_stopwords import active_search_stopword_terms
 from aimemory.schemas.memory import (
     MemoryContextItem,
     MemoryContextRequest,
@@ -35,7 +36,7 @@ from aimemory.schemas.memory import (
     ScoreParts,
 )
 from aimemory.services.attachments import AttachmentValidationError
-from aimemory.services.text import normalize_query, split_query_terms
+from aimemory.services.text import filter_query_terms, normalize_query
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ def search_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemorySearchResponse:
-    results, used_vector, duration_ms = _search_results(db, current_user, payload)
+    results, used_vector, duration_ms, query_terms, ignored_terms = _search_results(db, current_user, payload)
     logger.info(
         "memory.search",
         extra={
@@ -168,6 +169,8 @@ def search_memory(
             "top_k": payload.top_k,
             "result_count": len(results),
             "used_vector": used_vector,
+            "query_term_count": len(query_terms),
+            "ignored_term_count": len(ignored_terms),
             "duration_ms": duration_ms,
         },
     )
@@ -198,14 +201,14 @@ def build_memory_context(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
-    results, used_vector, search_duration_ms = _search_results(db, current_user, payload)
+    results, used_vector, search_duration_ms, query_terms, ignored_terms = _search_results(db, current_user, payload)
     context_text = build_context_text(results, payload.max_chars)
-    query_terms = split_query_terms(payload.query)
     request.state.request_log_response_summary = build_context_response_summary(
         payload.agent_id,
         payload.query,
         payload.top_k,
         query_terms,
+        ignored_terms,
         results,
         context_text,
         payload.max_chars,
@@ -221,6 +224,8 @@ def build_memory_context(
             "used_vector": used_vector,
             "context_chars": len(context_text),
             "truncated": bool(context_text) and len(context_text) >= payload.max_chars,
+            "query_term_count": len(query_terms),
+            "ignored_term_count": len(ignored_terms),
             "duration_ms": search_duration_ms,
         },
     )
@@ -312,9 +317,14 @@ def _search_results(
     payload: MemorySearchRequest | MemoryContextRequest,
 ):
     start = time.perf_counter()
-    normalized_query = normalize_query(payload.query)
-    results = search_memories(db, current_user.id, payload, normalized_query)
-    return results, False, round((time.perf_counter() - start) * 1000, 2)
+    stopwords = active_search_stopword_terms(db, current_user.id)
+    query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+    if not query_terms:
+        return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms
+
+    normalized_query = normalize_query(" ".join(query_terms))
+    results = search_memories(db, current_user.id, payload, normalized_query, query_terms)
+    return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:
@@ -345,11 +355,13 @@ def build_context_response_summary(
     query: str,
     top_k: int,
     query_terms: list[str],
+    ignored_terms: list[str],
     results: list[Any],
     context_text: str,
     max_chars: int,
 ) -> dict[str, Any]:
     logged_terms = query_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
+    logged_ignored_terms = ignored_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
     return {
         "type": "context",
         "agent_id": agent_id,
@@ -357,6 +369,7 @@ def build_context_response_summary(
         "top_k": top_k,
         "max_chars": max_chars,
         "query_terms": logged_terms,
+        "ignored_terms": logged_ignored_terms,
         "result_count": len(results),
         "context_chars": len(context_text),
         "truncated": bool(context_text) and len(context_text) >= max_chars,

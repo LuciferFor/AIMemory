@@ -1,4 +1,4 @@
-from aimemory.services.text import normalize_query, split_query_terms, weighted_score
+from aimemory.services.text import filter_query_terms, is_numeric_term, normalize_query, split_query_terms, weighted_score
 
 
 def test_normalize_query_collapses_space_and_width() -> None:
@@ -14,6 +14,31 @@ def test_split_query_terms_handles_english_and_cjk() -> None:
     assert "喜欢短回答" in terms
     assert "喜欢" in terms
     assert "回答" in terms
+
+
+def test_split_query_terms_ignores_pure_numbers() -> None:
+    terms = split_query_terms("2026-05-30 lucifer skill OpenClaw key gpt4")
+
+    assert "2026" not in terms
+    assert "05" not in terms
+    assert "30" not in terms
+    assert "gpt4" in terms
+    assert "key" in terms
+    assert is_numeric_term("２０２６") is True
+
+
+def test_filter_query_terms_uses_stopwords() -> None:
+    terms, ignored = filter_query_terms("2026-05-30 lucifer skill OpenClaw key", {"lucifer", "skill", "openclaw"})
+
+    assert terms == ["key"]
+    assert ignored == ["05", "2026", "30", "lucifer", "openclaw", "skill"]
+
+
+def test_filter_query_terms_can_return_no_effective_terms() -> None:
+    terms, ignored = filter_query_terms("2026 lucifer skill", {"lucifer", "skill"})
+
+    assert terms == []
+    assert ignored == ["2026", "lucifer", "skill"]
 
 
 def test_weighted_score_caps_score_parts() -> None:

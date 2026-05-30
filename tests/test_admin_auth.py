@@ -7,6 +7,8 @@ from aimemory.admin.auth import COOKIE_NAME, get_serializer
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
+from aimemory.models.search_stopword import SearchStopword
+from aimemory.models.user import User
 
 
 class _Rows:
@@ -147,6 +149,7 @@ class _RequestLogDb(_FakeDb):
                     "top_k": 8,
                     "max_chars": 3000,
                     "query_terms": ["回答", "偏好"],
+                    "ignored_terms": ["lucifer", "skill"],
                     "result_count": 1,
                     "context_chars": 128,
                     "truncated": False,
@@ -192,6 +195,42 @@ class _RequestLogDb(_FakeDb):
 
     def scalars(self, query) -> _Rows:
         return _Rows(self.users)
+
+
+class _StopwordDb(_FakeDb):
+    def __init__(self) -> None:
+        self.user_id = uuid.uuid4()
+        self.stopword_id = uuid.uuid4()
+        self.user = SimpleNamespace(id=self.user_id, name="lucifer")
+        self.stopword = SimpleNamespace(
+            id=self.stopword_id,
+            user_id=self.user_id,
+            term="lucifer",
+            note="名字",
+            created_at="2026-05-30 10:00:00+00:00",
+            deleted_at=None,
+        )
+        self.added = []
+        self.committed = False
+
+    def execute(self, query) -> _Rows:
+        return _Rows([(self.stopword, "lucifer")])
+
+    def scalars(self, query) -> _Rows:
+        return _Rows([self.user])
+
+    def get(self, model, key):
+        if model is User and key == self.user_id:
+            return self.user
+        if model is SearchStopword and key == self.stopword_id:
+            return self.stopword
+        return None
+
+    def add(self, value) -> None:
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.committed = True
 
 
 def _client(monkeypatch, db=None) -> TestClient:
@@ -309,11 +348,89 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "top_k 8" in response.text
     assert "max_chars 3000" in response.text
     assert "拆分关键词" in response.text
+    assert "忽略关键词" in response.text
+    assert "lucifer" in response.text
     assert "命中关键词" in response.text
     assert "回复偏好" in response.text
     assert "pref-short-replies" in response.text
     assert "用户喜欢短一点、自然一点的回答。" in response.text
     assert "Authorization" not in response.text
+
+
+def test_admin_search_stopwords_page_lists_terms(monkeypatch) -> None:
+    db = _StopwordDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get(f"/admin/search-stopwords?user_id={db.user_id}")
+
+    assert response.status_code == 200
+    assert "停用词" in response.text
+    assert "lucifer" in response.text
+    assert "名字" in response.text
+    assert str(db.stopword_id) in response.text
+
+
+def test_admin_can_add_search_stopword(monkeypatch) -> None:
+    db = _StopwordDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/search-stopwords",
+        data={
+            "csrf_token": csrf,
+            "selected_user_id": str(db.user_id),
+            "user_id": str(db.user_id),
+            "term": " Skill ",
+            "note": " 高频词 ",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/search-stopwords")
+    assert db.added[-1].term == "skill"
+    assert db.added[-1].note == "高频词"
+    assert db.committed is True
+
+
+def test_admin_rejects_numeric_search_stopword(monkeypatch) -> None:
+    db = _StopwordDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/search-stopwords",
+        data={
+            "csrf_token": csrf,
+            "selected_user_id": str(db.user_id),
+            "user_id": str(db.user_id),
+            "term": "2026",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_admin_can_delete_search_stopword(monkeypatch) -> None:
+    db = _StopwordDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/search-stopwords/{db.stopword_id}/delete",
+        data={"csrf_token": csrf, "selected_user_id": str(db.user_id)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert db.stopword.deleted_at is not None
+    assert db.committed is True
 
 
 def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:

@@ -72,6 +72,12 @@ button.danger {
   color: var(--danger);
 }
 
+.hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  text-align: center;
+}
+
 input,
 select,
 textarea {
@@ -341,6 +347,10 @@ h3 {
   grid-template-columns: repeat(4, minmax(140px, 1fr));
   align-items: end;
   gap: 10px;
+}
+
+.stopword-form {
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr) 150px;
 }
 
 .inline-form label,
@@ -776,6 +786,12 @@ th {
   background: #dcfce7;
   color: #047857;
   font-weight: 800;
+}
+
+.term-chip.ignored {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: var(--muted);
 }
 
 .summary-memory-list {

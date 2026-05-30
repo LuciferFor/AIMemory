@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% set title = "停用词 - AIMemory 管理后台" %}
+{% set heading = "停用词" %}
+{% set subheading = "按用户过滤高频噪声关键词" %}
+{% block content %}
+<section class="panel">
+  <form method="post" action="/admin/search-stopwords" class="filter-grid stopword-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="selected_user_id" value="{{ selected_user_id }}">
+    <label>用户
+      <select name="user_id" required>
+        <option value="">选择用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if selected_user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>停用词
+      <input name="term" maxlength="128" placeholder="lucifer / skill / xxx" required>
+    </label>
+    <label>备注
+      <input name="note" maxlength="256" placeholder="可选">
+    </label>
+    <button type="submit" class="primary">添加停用词</button>
+  </form>
+  <p class="hint">纯数字会被系统自动忽略，不需要添加。停用词只影响所属用户后续检索和请求日志命中词。</p>
+</section>
+
+<section class="panel">
+  <form method="get" action="/admin/search-stopwords" class="inline-form">
+    <label>
+      用户
+      <select name="user_id">
+        <option value="">全部用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if selected_user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">筛选</button>
+  </form>
+</section>
+
+<section class="panel">
+  <table>
+    <thead><tr><th>用户</th><th>停用词</th><th>备注</th><th>创建时间</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      {% set stopword = row.stopword %}
+      <tr>
+        <td>{{ row.user_name }}</td>
+        <td><code>{{ stopword.term }}</code></td>
+        <td>{{ stopword.note or "-" }}</td>
+        <td>{{ compact_datetime(stopword.created_at) }}</td>
+        <td class="actions">
+          <form method="post" action="/admin/search-stopwords/{{ stopword.id }}/delete" data-confirm="确认删除这个停用词？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="selected_user_id" value="{{ selected_user_id }}">
+            <button type="submit" class="danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty">暂无停用词</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

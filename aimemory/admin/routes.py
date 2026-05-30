@@ -30,15 +30,21 @@ from aimemory.models.api_key import ApiKey
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.request_log import RequestLog
+from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
 from aimemory.repositories.memories import get_attachment_for_admin, utcnow
+from aimemory.repositories.search_stopwords import (
+    add_default_search_stopwords,
+    add_search_stopword,
+    normalize_stopword,
+)
 from aimemory.services.attachments import attachment_search_text
-from aimemory.services.text import build_search_text
+from aimemory.services.text import build_search_text, is_numeric_term
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-1810"
+ADMIN_ASSET_VERSION = "20260530-1940"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -241,8 +247,11 @@ async def create_user(request: Request, db: Session = Depends(get_db)) -> Respon
     if not name:
         return redirect_to("/admin/users", error="请输入用户名。")
 
-    db.add(User(name=name))
+    user = User(name=name)
+    db.add(user)
     try:
+        db.flush()
+        add_default_search_stopwords(db, user)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -265,6 +274,99 @@ async def toggle_user(user_id: uuid.UUID, request: Request, db: Session = Depend
     db.add(user)
     db.commit()
     return redirect_to("/admin/users", notice="用户状态已更新。")
+
+
+@router.get("/search-stopwords")
+def search_stopwords_page(
+    request: Request,
+    user_id: str = "",
+    db: Session = Depends(get_db),
+) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/search-stopwords", error="用户筛选参数无效。")
+
+    users = db.scalars(select(User).order_by(User.name)).all()
+    query = (
+        select(SearchStopword, User.name.label("user_name"))
+        .join(User)
+        .where(SearchStopword.deleted_at.is_(None))
+        .order_by(User.name, SearchStopword.term)
+    )
+    if selected_user_id:
+        query = query.where(SearchStopword.user_id == selected_user_id)
+    rows = [
+        {"stopword": stopword, "user_name": user_name}
+        for stopword, user_name in db.execute(query).all()
+    ]
+    return templates.TemplateResponse(
+        request,
+        "search_stopwords.html",
+        base_context(
+            request,
+            session,
+            users=users,
+            rows=rows,
+            selected_user_id=str(selected_user_id) if selected_user_id else "",
+        ),
+    )
+
+
+@router.post("/search-stopwords")
+async def create_search_stopword(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    selected_user_id = form.get("selected_user_id", "")
+    try:
+        user_id = uuid.UUID(form.get("user_id", ""))
+    except ValueError:
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="请选择有效用户。")
+
+    user = db.get(User, user_id)
+    if user is None:
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="用户不存在。")
+
+    term = normalize_stopword(form.get("term", ""))
+    if not term:
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="请输入停用词。")
+    if len(term) > 128:
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="停用词不能超过 128 个字符。")
+    if is_numeric_term(term):
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="纯数字会被系统自动忽略，无需添加。")
+
+    note = form.get("note", "").strip()
+    add_search_stopword(db, user.id, term, note)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return redirect_to("/admin/search-stopwords", user_id=selected_user_id, error="这个停用词已经存在。")
+    return redirect_to("/admin/search-stopwords", user_id=str(user.id), notice="停用词已添加。")
+
+
+@router.post("/search-stopwords/{stopword_id}/delete")
+async def delete_search_stopword(stopword_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    selected_user_id = form.get("selected_user_id", "")
+    stopword = db.get(SearchStopword, stopword_id)
+    if stopword is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="停用词不存在。")
+    if stopword.deleted_at is None:
+        stopword.deleted_at = utcnow()
+        db.add(stopword)
+        db.commit()
+    return redirect_to("/admin/search-stopwords", user_id=selected_user_id, notice="停用词已删除。")
 
 
 @router.get("/api-keys")

@@ -8,6 +8,7 @@ from aimemory.core.security import api_key_prefix, generate_api_key, hash_api_ke
 from aimemory.db.session import SessionLocal
 from aimemory.models.api_key import ApiKey
 from aimemory.models.user import User
+from aimemory.repositories.search_stopwords import add_default_search_stopwords
 
 app = typer.Typer(help="AIMemory administration commands.")
 
@@ -22,6 +23,8 @@ def create_user(name: str) -> None:
 
         user = User(name=name)
         db.add(user)
+        db.flush()
+        add_default_search_stopwords(db, user)
         db.commit()
         typer.echo(f"Created user {name}: {user.id}")
 

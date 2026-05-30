@@ -156,8 +156,11 @@ def search_memories(
     user_id: uuid.UUID,
     payload: MemorySearchRequest,
     normalized_query: str,
+    query_terms: list[str] | None = None,
 ) -> list[SearchResult]:
-    query_terms = split_query_terms(normalized_query) or [normalized_query]
+    query_terms = query_terms if query_terms is not None else split_query_terms(normalized_query)
+    if not query_terms:
+        return []
     params: dict[str, Any] = {
         "user_id": user_id,
         "agent_id": payload.agent_id,

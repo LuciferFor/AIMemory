@@ -14,7 +14,8 @@ from aimemory.schemas.memory import MemorySearchRequest
 
 
 class _FakeDb:
-    pass
+    def scalars(self, query):
+        return SimpleNamespace(all=lambda: [])
 
 
 def _client_with_user(monkeypatch=None) -> TestClient:
@@ -124,6 +125,7 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     assert summary["query"] == "回答偏好"
     assert summary["top_k"] == 8
     assert summary["max_chars"] == 3000
+    assert summary["ignored_terms"] == []
     assert "回答" in summary["query_terms"]
     assert "偏好" in summary["query_terms"]
     assert summary["result_count"] == 1
@@ -136,6 +138,69 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     rendered = str(summary)
     assert response.json()["context_text"] not in rendered
     assert long_content not in rendered
+
+
+def test_context_ignores_numeric_and_user_stopwords(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    records = []
+
+    def _fail_search(*args, **kwargs):
+        raise AssertionError("search should not run when all terms are ignored")
+
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: {"lucifer", "skill"})
+    monkeypatch.setattr(routes, "search_memories", _fail_search)
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    get_settings.cache_clear()
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: _FakeDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "2026-05-30 lucifer skill"})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    summary = records[0]["response_summary"]
+    assert summary["query_terms"] == []
+    assert summary["ignored_terms"] == ["05", "2026", "30", "lucifer", "skill"]
+    assert summary["result_count"] == 0
+
+
+def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    calls = []
+    result = SearchResult(
+        memory_id=uuid4(),
+        external_id="openclaw-lucifer-key-migration-20260530",
+        title="OpenClaw AIMemory key migrated to lucifer user",
+        content="OpenClaw now uses a new AIMemory API key owned by the lucifer user.",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.91,
+        score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.01},
+        embedding_status="disabled",
+    )
+
+    def _fake_search(*args):
+        calls.append(args)
+        return [result]
+
+    client = _client_with_user(monkeypatch)
+    monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: {"aimemory", "lucifer", "openclaw"})
+    monkeypatch.setattr(routes, "search_memories", _fake_search)
+
+    response = client.post(
+        "/v1/memories/context",
+        json={"agent_id": "assistant", "query": "OpenClaw AIMemory lucifer key"},
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][3] == "key"
+    assert calls[0][4] == ["key"]
 
 
 def test_search_returns_attachment_metadata(monkeypatch) -> None:
@@ -291,9 +356,17 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
     payload = MemorySearchRequest(agent_id="assistant", query="自然 回复")
 
-    results, used_vector, duration_ms = routes._search_results(_FakeDb(), SimpleNamespace(id=uuid4()), payload)
+    results, used_vector, duration_ms, query_terms, ignored_terms = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
 
     assert results == []
     assert used_vector is False
     assert duration_ms >= 0
-    assert len(calls[0]) == 4
+    assert query_terms == ["回复", "自然"]
+    assert ignored_terms == []
+    assert len(calls[0]) == 5
+    assert calls[0][3] == "回复 自然"
+    assert calls[0][4] == ["回复", "自然"]

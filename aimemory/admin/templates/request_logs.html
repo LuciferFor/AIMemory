@@ -133,6 +133,16 @@
                   {% endfor %}
                 </span>
               </div>
+              <div>
+                <span class="summary-label">忽略关键词</span>
+                <span class="term-list">
+                  {% for term in summary.get("ignored_terms", []) %}
+                  <code class="term-chip ignored">{{ term }}</code>
+                  {% else %}
+                  <span class="muted">无</span>
+                  {% endfor %}
+                </span>
+              </div>
             </div>
             {% if summary["items"] %}
             <div class="summary-memory-list">
