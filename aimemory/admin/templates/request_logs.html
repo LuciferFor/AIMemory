@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% set title = "请求日志 - AIMemory 管理后台" %}
+{% set heading = "请求日志" %}
+{% set subheading = "接口与后台访问记录" %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/admin/request-logs" class="filter-grid request-log-filter">
+    <label>来源
+      <select name="source">
+        <option value="" {{ "selected" if not filters.source else "" }}>全部来源</option>
+        <option value="api" {{ "selected" if filters.source == "api" else "" }}>业务接口</option>
+        <option value="admin" {{ "selected" if filters.source == "admin" else "" }}>管理后台</option>
+        <option value="root" {{ "selected" if filters.source == "root" else "" }}>根入口</option>
+      </select>
+    </label>
+    <label>方法
+      <input name="method" value="{{ filters.method }}" placeholder="GET / POST">
+    </label>
+    <label>状态码
+      <input name="status_code" value="{{ filters.status_code }}" placeholder="200 / 401 / 500">
+    </label>
+    <label>用户
+      <select name="user_id">
+        <option value="">全部用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>路径关键词
+      <input name="q" value="{{ filters.q }}" placeholder="/v1/memories">
+    </label>
+    <label>开始日期
+      <input type="date" name="since" value="{{ filters.since }}">
+    </label>
+    <label>结束日期
+      <input type="date" name="until" value="{{ filters.until }}">
+    </label>
+    <label>数量上限
+      <input type="number" name="limit" min="1" max="500" value="{{ filters.limit }}">
+    </label>
+    <button type="submit" class="primary">搜索</button>
+  </form>
+</section>
+
+<section class="panel request-log-table-panel">
+  <table class="request-log-table">
+    <colgroup>
+      <col class="col-log-time">
+      <col class="col-log-request">
+      <col class="col-log-status">
+      <col class="col-log-actor">
+      <col class="col-log-client">
+      <col class="col-log-request-id">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>时间</th>
+        <th>请求</th>
+        <th>状态</th>
+        <th>身份</th>
+        <th>客户端</th>
+        <th>Request ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set log = row.log %}
+      <tr>
+        <td title="{{ full_datetime(log.created_at) }}">{{ compact_datetime(log.created_at) }}</td>
+        <td class="request-cell">
+          <span class="method-chip">{{ log.method }}</span>
+          <strong title="{{ log.path }}">{{ log.path }}</strong>
+          {% if log.route_path and log.route_path != log.path %}
+          <code title="{{ log.route_path }}">{{ log.route_path }}</code>
+          {% endif %}
+        </td>
+        <td>
+          <span class="badge {{ 'ready' if log.status_code < 400 else 'pending' if log.status_code < 500 else 'failed' }}">{{ log.status_code }}</span>
+          <span class="muted">{{ "%.2f"|format(log.duration_ms) }}ms</span>
+          {% if log.error_type %}<code title="{{ log.error_type }}">{{ log.error_type }}</code>{% endif %}
+        </td>
+        <td>
+          {% if log.admin_username %}
+          <strong>{{ log.admin_username }}</strong>
+          <span class="muted">管理员</span>
+          {% elif log.user_id %}
+          <strong title="{{ log.user_id }}">{{ row.user_name or short_middle(log.user_id, 8, 6) }}</strong>
+          {% if log.api_key_prefix %}<span class="muted">{{ log.api_key_prefix }}</span>{% endif %}
+          {% else %}
+          <span class="muted">未识别</span>
+          {% endif %}
+        </td>
+        <td class="client-cell">
+          <span title="{{ log.client_ip or '' }}">{{ log.client_ip or "-" }}</span>
+          <code title="{{ log.user_agent or '' }}">{{ short_middle(log.user_agent or "-", 24, 10) }}</code>
+        </td>
+        <td><code title="{{ log.request_id }}">{{ short_middle(log.request_id, 10, 8) }}</code></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">暂无请求日志</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

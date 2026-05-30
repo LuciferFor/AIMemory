@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -31,6 +32,9 @@ def get_current_user(
             detail="Invalid API key.",
         )
 
+    request.state.request_log_user_id = api_key.user_id
+    request.state.request_log_api_key_id = api_key.id
+    request.state.request_log_api_key_prefix = api_key.key_prefix
     api_key.last_used_at = datetime.now(UTC)
     db.add(api_key)
     db.commit()

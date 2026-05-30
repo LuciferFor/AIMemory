@@ -29,6 +29,7 @@ from aimemory.db.session import get_db
 from aimemory.models.api_key import ApiKey
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
+from aimemory.models.request_log import RequestLog
 from aimemory.models.user import User
 from aimemory.repositories.memories import get_attachment_for_admin, utcnow
 from aimemory.services.attachments import attachment_search_text
@@ -37,7 +38,7 @@ from aimemory.services.text import build_search_text
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-1645"
+ADMIN_ASSET_VERSION = "20260530-1810"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -117,7 +118,13 @@ def require_admin_context(request: Request) -> dict[str, Any] | RedirectResponse
     session = get_admin_session(request)
     if session is None:
         return login_redirect(request)
+    mark_admin_request(request, session)
     return session
+
+
+def mark_admin_request(request: Request, session: dict[str, Any] | None) -> None:
+    if session and session.get("sub"):
+        request.state.request_log_admin_username = session["sub"]
 
 
 def base_context(request: Request, session: dict[str, Any], **extra: Any) -> dict[str, Any]:
@@ -149,7 +156,9 @@ def active_attachments(memory: Memory) -> list[MemoryAttachment]:
 
 @router.get("/login")
 def login_page(request: Request) -> Response:
-    if get_admin_session(request):
+    session = get_admin_session(request)
+    mark_admin_request(request, session)
+    if session:
         return redirect_to("/admin")
     return templates.TemplateResponse(
         request,
@@ -174,6 +183,7 @@ async def login_submit(request: Request) -> Response:
     if not verify_admin_credentials(username, password):
         return redirect_to("/admin/login", error="用户名或密码错误。", next=next_url)
 
+    request.state.request_log_admin_username = username
     response = redirect_to(next_url)
     set_admin_session(response, create_session_payload(username))
     return response
@@ -444,6 +454,82 @@ def memories_page(
                 "agent_id": agent_id,
                 "q": q,
                 "deleted": deleted,
+                "since": since,
+                "until": until,
+                "limit": limit,
+            },
+        ),
+    )
+
+
+@router.get("/request-logs")
+def request_logs_page(
+    request: Request,
+    source: str = Query(default="", pattern="^(|api|admin|root)$"),
+    method: str = "",
+    status_code: str = "",
+    q: str = "",
+    user_id: str = "",
+    since: str = "",
+    until: str = "",
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/request-logs", error="用户筛选参数无效。")
+
+    parsed_status_code: int | None = None
+    if status_code.strip():
+        try:
+            parsed_status_code = int(status_code)
+        except ValueError:
+            return redirect_to("/admin/request-logs", error="状态码筛选参数无效。")
+
+    normalized_method = method.strip().upper()
+    query = select(RequestLog, User.name.label("user_name")).outerjoin(User, User.id == RequestLog.user_id).order_by(RequestLog.created_at.desc())
+    if source:
+        query = query.where(RequestLog.source == source)
+    if normalized_method:
+        query = query.where(RequestLog.method == normalized_method)
+    if parsed_status_code is not None:
+        query = query.where(RequestLog.status_code == parsed_status_code)
+    if selected_user_id:
+        query = query.where(RequestLog.user_id == selected_user_id)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.where(or_(RequestLog.path.ilike(like), RequestLog.route_path.ilike(like), RequestLog.request_id.ilike(like)))
+    since_dt = parse_date(since)
+    until_dt = parse_date(until, end_of_day=True)
+    if since_dt:
+        query = query.where(RequestLog.created_at >= since_dt)
+    if until_dt:
+        query = query.where(RequestLog.created_at <= until_dt)
+
+    rows = [
+        {"log": log, "user_name": user_name}
+        for log, user_name in db.execute(query.limit(limit)).all()
+    ]
+    users = db.scalars(select(User).order_by(User.name)).all()
+    return templates.TemplateResponse(
+        request,
+        "request_logs.html",
+        base_context(
+            request,
+            session,
+            rows=rows,
+            users=users,
+            filters={
+                "source": source,
+                "method": normalized_method,
+                "status_code": status_code,
+                "q": q,
+                "user_id": str(selected_user_id) if selected_user_id else "",
                 "since": since,
                 "until": until,
                 "limit": limit,

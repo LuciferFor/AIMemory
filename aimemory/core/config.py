@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
     slow_request_ms: int = Field(default=1000, ge=1)
+    request_log_db_enabled: bool = True
 
     database_url: str = "postgresql+psycopg://aimemory:aimemory@localhost:5432/aimemory"
     redis_url: str = "redis://localhost:6379/0"

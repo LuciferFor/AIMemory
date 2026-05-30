@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from aimemory.api.deps import get_current_user
 from aimemory.api import routes
+from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
 from aimemory.repositories.memories import SearchAttachment, SearchResult
@@ -16,14 +17,19 @@ class _FakeDb:
     pass
 
 
-def _client_with_user() -> TestClient:
+def _client_with_user(monkeypatch=None) -> TestClient:
+    if monkeypatch is not None:
+        monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+        get_settings.cache_clear()
     app = create_app()
     app.dependency_overrides[get_db] = lambda: _FakeDb()
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
     return TestClient(app)
 
 
-def test_context_requires_auth() -> None:
+def test_context_requires_auth(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+    get_settings.cache_clear()
     client = TestClient(create_app())
 
     response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
@@ -31,7 +37,9 @@ def test_context_requires_auth() -> None:
     assert response.status_code == 401
 
 
-def test_write_policy_requires_auth() -> None:
+def test_write_policy_requires_auth(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+    get_settings.cache_clear()
     client = TestClient(create_app())
 
     response = client.get("/v1/memories/write-policy")
@@ -40,7 +48,7 @@ def test_write_policy_requires_auth() -> None:
 
 
 def test_context_returns_empty_text_without_memories(monkeypatch) -> None:
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [])
 
     response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
@@ -66,7 +74,7 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
         score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.01},
         embedding_status="disabled",
     )
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
     response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "回答偏好"})
@@ -104,7 +112,7 @@ def test_search_returns_attachment_metadata(monkeypatch) -> None:
             )
         ],
     )
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
     response = client.post("/v1/memories/search", json={"agent_id": "assistant", "query": "桥"})
@@ -140,7 +148,7 @@ def test_context_includes_attachment_description_without_base64(monkeypatch) -> 
             )
         ],
     )
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
     response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "桥"})
@@ -152,7 +160,9 @@ def test_context_includes_attachment_description_without_base64(monkeypatch) -> 
     assert "data_base64" not in context_text
 
 
-def test_attachment_download_requires_auth() -> None:
+def test_attachment_download_requires_auth(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+    get_settings.cache_clear()
     client = TestClient(create_app())
 
     response = client.get(f"/v1/memories/attachments/{uuid4()}")
@@ -162,7 +172,7 @@ def test_attachment_download_requires_auth() -> None:
 
 def test_attachment_download_returns_image(monkeypatch) -> None:
     attachment_id = uuid4()
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(
         routes,
         "get_attachment_for_user",
@@ -196,7 +206,7 @@ def test_context_respects_max_chars(monkeypatch) -> None:
         score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.0},
         embedding_status="disabled",
     )
-    client = _client_with_user()
+    client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
     response = client.post(
@@ -208,8 +218,8 @@ def test_context_respects_max_chars(monkeypatch) -> None:
     assert len(response.json()["context_text"]) <= 80
 
 
-def test_write_policy_returns_standard_fields() -> None:
-    client = _client_with_user()
+def test_write_policy_returns_standard_fields(monkeypatch) -> None:
+    client = _client_with_user(monkeypatch)
 
     response = client.get("/v1/memories/write-policy")
 

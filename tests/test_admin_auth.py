@@ -120,10 +120,62 @@ class _MemoryDb(_FakeDb):
         self.committed = True
 
 
+class _RequestLogDb(_FakeDb):
+    def __init__(self) -> None:
+        self.user_id = uuid.uuid4()
+        self.logs = [
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                request_id="request-log-123",
+                source="api",
+                method="POST",
+                path="/v1/memories/context",
+                route_path="/v1/memories/context",
+                status_code=200,
+                duration_ms=12.34,
+                client_ip="192.168.31.9",
+                user_agent="node",
+                user_id=self.user_id,
+                api_key_id=uuid.uuid4(),
+                api_key_prefix="aim_test",
+                admin_username=None,
+                error_type=None,
+                created_at="2026-05-30 10:00:00+00:00",
+            ),
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                request_id="admin-log-456",
+                source="admin",
+                method="GET",
+                path="/admin",
+                route_path="/admin",
+                status_code=303,
+                duration_ms=3.21,
+                client_ip="127.0.0.1",
+                user_agent="browser",
+                user_id=None,
+                api_key_id=None,
+                api_key_prefix=None,
+                admin_username="admin",
+                error_type=None,
+                created_at="2026-05-30 10:01:00+00:00",
+            ),
+        ]
+        self.users = [SimpleNamespace(id=self.user_id, name="lucifer")]
+        self.scalars_calls = 0
+
+    def execute(self, query) -> _Rows:
+        return _Rows([(self.logs[0], "lucifer"), (self.logs[1], None)])
+
+    def scalars(self, query) -> _Rows:
+        return _Rows(self.users)
+
+
 def _client(monkeypatch, db=None) -> TestClient:
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "secret")
     monkeypatch.setenv("ADMIN_SESSION_SECRET", "test-secret")
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
     get_settings.cache_clear()
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db or _FakeDb()
@@ -211,6 +263,24 @@ def test_admin_jobs_page_explains_disabled_embedding(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "不再创建向量任务" in response.text
+
+
+def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
+    db = _RequestLogDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get("/admin/request-logs?source=api&method=POST&status_code=200&q=context&user_id=&limit=100")
+
+    assert response.status_code == 200
+    assert "请求日志" in response.text
+    assert "/v1/memories/context" in response.text
+    assert "request-log-123" in response.text
+    assert "192.168.31.9" in response.text
+    assert "aim_test" in response.text
+    assert "POST" in response.text
+    assert "12.34ms" in response.text
+    assert "Authorization" not in response.text
 
 
 def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:

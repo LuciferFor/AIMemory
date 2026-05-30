@@ -619,6 +619,68 @@ th {
   white-space: nowrap;
 }
 
+.request-log-table-panel {
+  padding: 0;
+}
+
+.request-log-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.request-log-table .col-log-time {
+  width: 120px;
+}
+
+.request-log-table .col-log-request {
+  width: 34%;
+}
+
+.request-log-table .col-log-status {
+  width: 140px;
+}
+
+.request-log-table .col-log-actor {
+  width: 170px;
+}
+
+.request-log-table .col-log-client {
+  width: 220px;
+}
+
+.request-log-table .col-log-request-id {
+  width: 150px;
+}
+
+.request-cell,
+.client-cell {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+
+.request-cell strong,
+.request-cell code,
+.client-cell code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.method-chip {
+  display: inline-flex;
+  min-width: 52px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .action-cell {
   min-width: 150px;
   vertical-align: middle;
