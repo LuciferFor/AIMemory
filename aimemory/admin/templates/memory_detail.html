@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% set title = "记忆详情 - AIMemory 管理后台" %}
+{% set heading = "记忆详情" %}
+{% set subheading = "查看与修改标题正文" %}
+{% block content %}
+<div class="section-head">
+  <a class="button-link" href="/admin/memories">返回列表</a>
+  {% if memory.deleted_at %}
+  <span class="badge failed">已删除</span>
+  {% else %}
+  <span class="badge ready">正常</span>
+  {% endif %}
+</div>
+
+<section class="panel detail-layout">
+  <form method="post" action="/admin/memories/{{ memory.id }}/update" class="memory-edit-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      标题
+      <input name="title" value="{{ memory.title }}" maxlength="512" required>
+    </label>
+    <label>
+      正文
+      <textarea name="content" rows="14" required>{{ memory.content }}</textarea>
+    </label>
+    <div class="form-actions">
+      <button type="submit" class="primary">保存修改</button>
+      <a class="button-link" href="/admin/memories">返回列表</a>
+    </div>
+  </form>
+
+  <aside class="detail-side">
+    <section class="info-panel">
+      <h2>归属</h2>
+      <dl class="detail-list">
+        <dt>用户</dt>
+        <dd>{{ user_name }}</dd>
+        <dt>memory_id</dt>
+        <dd><code>{{ memory.id }}</code></dd>
+        <dt>agent_id</dt>
+        <dd><code>{{ memory.agent_id }}</code></dd>
+        <dt>external_id</dt>
+        <dd><code>{{ memory.external_id }}</code></dd>
+      </dl>
+    </section>
+
+    <section class="info-panel">
+      <h2>时间</h2>
+      <dl class="detail-list">
+        <dt>创建时间</dt>
+        <dd>{{ full_datetime(memory.created_at) }}</dd>
+        <dt>更新时间</dt>
+        <dd>{{ full_datetime(memory.updated_at) }}</dd>
+        {% if memory.deleted_at %}
+        <dt>删除时间</dt>
+        <dd>{{ full_datetime(memory.deleted_at) }}</dd>
+        {% endif %}
+      </dl>
+    </section>
+  </aside>
+</section>
+
+<section class="panel">
+  <h2>元数据</h2>
+  <pre>{{ memory.metadata_json }}</pre>
+</section>
+
+{% if attachments %}
+<section class="panel">
+  <h2>附件</h2>
+  <div class="detail-attachment-grid">
+    {% for attachment in attachments %}
+    <figure class="detail-attachment-card">
+      <a href="/admin/attachments/{{ attachment.id }}" target="_blank" rel="noopener">
+        <img src="/admin/attachments/{{ attachment.id }}" alt="{{ attachment.filename }}">
+      </a>
+      <figcaption>
+        <strong>{{ attachment.filename }}</strong>
+        <span>{{ attachment.mime_type }} / {{ attachment.size_bytes }} bytes</span>
+        {% if attachment.description %}<p>{{ attachment.description }}</p>{% endif %}
+        {% if attachment.ocr_text %}<pre>{{ attachment.ocr_text }}</pre>{% endif %}
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

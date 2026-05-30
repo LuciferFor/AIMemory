@@ -8,7 +8,7 @@ from aimemory.api.deps import get_current_user
 from aimemory.api import routes
 from aimemory.db.session import get_db
 from aimemory.main import create_app
-from aimemory.repositories.memories import SearchResult
+from aimemory.repositories.memories import SearchAttachment, SearchResult
 from aimemory.schemas.memory import MemorySearchRequest
 
 
@@ -77,6 +77,109 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     assert "回复偏好：简短自然" in body["context_text"]
     assert body["items"][0]["external_id"] == "pref-short-replies"
     assert body["items"][0]["embedding_status"] == "disabled"
+
+
+def test_search_returns_attachment_metadata(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    attachment_id = uuid4()
+    result = SearchResult(
+        memory_id=uuid4(),
+        external_id="image-memory",
+        title="图片记忆",
+        content="这条记忆带图片。",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.8,
+        score_parts={"semantic": 0.0, "keyword": 0.2, "fuzzy": 0.3},
+        embedding_status="disabled",
+        attachments=[
+            SearchAttachment(
+                attachment_id=attachment_id,
+                filename="scene.png",
+                mime_type="image/png",
+                size_bytes=24,
+                sha256="a" * 64,
+                description="图片里有一座桥",
+            )
+        ],
+    )
+    client = _client_with_user()
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
+
+    response = client.post("/v1/memories/search", json={"agent_id": "assistant", "query": "桥"})
+
+    assert response.status_code == 200
+    attachment = response.json()["items"][0]["attachments"][0]
+    assert attachment["attachment_id"] == str(attachment_id)
+    assert attachment["download_url"] == f"/v1/memories/attachments/{attachment_id}"
+    assert "data_base64" not in attachment
+
+
+def test_context_includes_attachment_description_without_base64(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    result = SearchResult(
+        memory_id=uuid4(),
+        external_id="image-memory",
+        title="图片记忆",
+        content="这条记忆带图片。",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.8,
+        score_parts={"semantic": 0.0, "keyword": 0.2, "fuzzy": 0.3},
+        embedding_status="disabled",
+        attachments=[
+            SearchAttachment(
+                attachment_id=uuid4(),
+                filename="scene.png",
+                mime_type="image/png",
+                size_bytes=24,
+                sha256="a" * 64,
+                description="图片里有一座桥",
+            )
+        ],
+    )
+    client = _client_with_user()
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "桥"})
+
+    assert response.status_code == 200
+    context_text = response.json()["context_text"]
+    assert "图片附件" in context_text
+    assert "图片里有一座桥" in context_text
+    assert "data_base64" not in context_text
+
+
+def test_attachment_download_requires_auth() -> None:
+    client = TestClient(create_app())
+
+    response = client.get(f"/v1/memories/attachments/{uuid4()}")
+
+    assert response.status_code == 401
+
+
+def test_attachment_download_returns_image(monkeypatch) -> None:
+    attachment_id = uuid4()
+    client = _client_with_user()
+    monkeypatch.setattr(
+        routes,
+        "get_attachment_for_user",
+        lambda *args, **kwargs: SimpleNamespace(
+            id=attachment_id,
+            image_bytes=b"\x89PNG\r\n\x1a\n",
+            mime_type="image/png",
+            size_bytes=8,
+            sha256="a" * 64,
+        ),
+    )
+
+    response = client.get(f"/v1/memories/attachments/{attachment_id}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == b"\x89PNG\r\n\x1a\n"
 
 
 def test_context_respects_max_chars(monkeypatch) -> None:

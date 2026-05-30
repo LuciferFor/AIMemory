@@ -48,11 +48,21 @@
       <tr>
         <td>{{ row.user_name }}</td>
         <td><code>{{ key.key_prefix }}</code></td>
-        <td>{{ key.label or "" }}</td>
+        <td>
+          <span class="label-view">{{ key.label or "" }}</span>
+          <form method="post" action="/admin/api-keys/{{ key.id }}/label" class="label-edit" hidden>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="selected_user_id" value="{{ selected_user_id }}">
+            <input name="label" value="{{ key.label or '' }}" maxlength="128" aria-label="接口密钥标签">
+            <button type="submit" class="primary">保存</button>
+            <button type="button" data-edit-cancel>取消</button>
+          </form>
+        </td>
         <td><span class="badge {{ 'failed' if key.revoked_at else 'ready' }}">{{ "已吊销" if key.revoked_at else "启用" }}</span></td>
         <td>{{ key.last_used_at or "" }}</td>
         <td>{{ key.created_at }}</td>
         <td class="actions">
+          <button type="button" data-edit-button>修改</button>
           {% if not key.revoked_at %}
           <form method="post" action="/admin/api-keys/{{ key.id }}/revoke" data-confirm="确认吊销这个接口密钥？">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -67,4 +77,41 @@
     </tbody>
   </table>
 </section>
+<script>
+  document.addEventListener("click", function (event) {
+    const editButton = event.target.closest("[data-edit-button]");
+    const cancelButton = event.target.closest("[data-edit-cancel]");
+    if (!editButton && !cancelButton) {
+      return;
+    }
+
+    const row = event.target.closest("tr");
+    const closeRow = function (targetRow) {
+      const labelView = targetRow.querySelector(".label-view");
+      const labelEdit = targetRow.querySelector(".label-edit");
+      const labelInput = targetRow.querySelector(".label-edit input[name='label']");
+      const rowEditButton = targetRow.querySelector("[data-edit-button]");
+      labelView.hidden = false;
+      labelEdit.hidden = true;
+      rowEditButton.hidden = false;
+      labelInput.value = labelView.textContent.trim();
+    };
+
+    document.querySelectorAll("tbody tr").forEach(function (targetRow) {
+      if (targetRow !== row && targetRow.querySelector(".label-edit")) {
+        closeRow(targetRow);
+      }
+    });
+
+    if (cancelButton) {
+      closeRow(row);
+      return;
+    }
+
+    row.querySelector(".label-view").hidden = true;
+    row.querySelector(".label-edit").hidden = false;
+    row.querySelector("[data-edit-button]").hidden = true;
+    row.querySelector(".label-edit input[name='label']").focus();
+  });
+</script>
 {% endblock %}

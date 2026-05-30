@@ -3,13 +3,14 @@ from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.templating import Jinja2Templates
 from redis import Redis
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.responses import RedirectResponse, Response
 
 from aimemory.admin.auth import (
@@ -27,11 +28,16 @@ from aimemory.core.security import api_key_prefix, generate_api_key, hash_api_ke
 from aimemory.db.session import get_db
 from aimemory.models.api_key import ApiKey
 from aimemory.models.memory import Memory
+from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.user import User
-from aimemory.repositories.memories import utcnow
+from aimemory.repositories.memories import get_attachment_for_admin, utcnow
+from aimemory.services.attachments import attachment_search_text
+from aimemory.services.text import build_search_text
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
+ADMIN_ASSET_VERSION = "20260530-1645"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -48,6 +54,57 @@ DELETED_MODE_LABELS = {
 }
 templates.env.globals["status_label"] = lambda value: STATUS_LABELS.get(value, value)
 templates.env.globals["deleted_mode_label"] = lambda value: DELETED_MODE_LABELS.get(value, value)
+
+
+def short_middle(value: object, head: int = 10, tail: int = 6) -> str:
+    text_value = str(value or "")
+    if len(text_value) <= head + tail + 3:
+        return text_value
+    return f"{text_value[:head]}...{text_value[-tail:]}"
+
+
+def parse_datetime_value(value: object | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(ADMIN_TIMEZONE)
+
+
+def compact_datetime(value: object | None) -> str:
+    parsed = parse_datetime_value(value)
+    if parsed is None:
+        return str(value or "")
+    return parsed.strftime("%m-%d %H:%M")
+
+
+def full_datetime(value: object | None) -> str:
+    parsed = parse_datetime_value(value)
+    if parsed is None:
+        return str(value or "")
+    return f"{parsed.strftime('%Y-%m-%d %H:%M:%S')} 北京时间"
+
+
+templates.env.globals["short_middle"] = short_middle
+templates.env.globals["compact_datetime"] = compact_datetime
+templates.env.globals["full_datetime"] = full_datetime
+templates.env.globals["admin_asset_version"] = ADMIN_ASSET_VERSION
+
+
+def parse_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
+    if isinstance(value, uuid.UUID):
+        return value
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    return uuid.UUID(cleaned)
 
 
 def redirect_to(path: str, **params: str) -> RedirectResponse:
@@ -84,6 +141,10 @@ def parse_date(value: str | None, end_of_day: bool = False) -> datetime | None:
         parsed_time = time.max if end_of_day else time.min
         parsed_date = datetime.combine(parsed_date.date(), parsed_time, tzinfo=UTC)
     return parsed_date
+
+
+def active_attachments(memory: Memory) -> list[MemoryAttachment]:
+    return [attachment for attachment in memory.attachments if attachment.deleted_at is None]
 
 
 @router.get("/login")
@@ -199,13 +260,17 @@ async def toggle_user(user_id: uuid.UUID, request: Request, db: Session = Depend
 @router.get("/api-keys")
 def api_keys_page(
     request: Request,
-    user_id: uuid.UUID | None = None,
+    user_id: str = "",
     db: Session = Depends(get_db),
 ) -> Response:
     session = require_admin_context(request)
     if isinstance(session, RedirectResponse):
         return session
-    return render_api_keys(request, session, db, user_id=user_id)
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/api-keys", error="用户筛选参数无效。")
+    return render_api_keys(request, session, db, user_id=selected_user_id)
 
 
 def render_api_keys(
@@ -266,6 +331,27 @@ async def create_api_key(request: Request, db: Session = Depends(get_db)) -> Res
     return render_api_keys(request, session, db, user_id=user.id, created_key=raw_key)
 
 
+@router.post("/api-keys/{api_key_id}/label")
+async def update_api_key_label(api_key_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    label = form.get("label", "").strip()
+    selected_user_id = form.get("selected_user_id", "")
+    if len(label) > 128:
+        return redirect_to("/admin/api-keys", user_id=selected_user_id, error="标签不能超过 128 个字符。")
+
+    api_key = db.get(ApiKey, api_key_id)
+    if api_key is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="接口密钥不存在。")
+    api_key.label = label or None
+    db.add(api_key)
+    db.commit()
+    return redirect_to("/admin/api-keys", user_id=selected_user_id, notice="接口密钥标签已更新。")
+
+
 @router.post("/api-keys/{api_key_id}/revoke")
 async def revoke_api_key(api_key_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
     session = require_admin_context(request)
@@ -285,7 +371,7 @@ async def revoke_api_key(api_key_id: uuid.UUID, request: Request, db: Session = 
 @router.get("/memories")
 def memories_page(
     request: Request,
-    user_id: uuid.UUID | None = None,
+    user_id: str = "",
     agent_id: str = "",
     q: str = "",
     deleted: str = Query(default="active", pattern="^(active|deleted|all)$"),
@@ -298,9 +384,19 @@ def memories_page(
     if isinstance(session, RedirectResponse):
         return session
 
-    query = select(Memory, User.name.label("user_name")).join(User).order_by(Memory.updated_at.desc())
-    if user_id:
-        query = query.where(Memory.user_id == user_id)
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/memories", error="用户筛选参数无效。")
+
+    query = (
+        select(Memory, User.name.label("user_name"))
+        .join(User)
+        .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
+        .order_by(Memory.updated_at.desc())
+    )
+    if selected_user_id:
+        query = query.where(Memory.user_id == selected_user_id)
     if agent_id.strip():
         query = query.where(Memory.agent_id == agent_id.strip())
     if deleted == "active":
@@ -325,7 +421,11 @@ def memories_page(
         query = query.where(Memory.created_at <= until_dt)
 
     rows = [
-        {"memory": memory, "user_name": user_name}
+        {
+            "memory": memory,
+            "user_name": user_name,
+            "attachments": [attachment for attachment in memory.attachments if attachment.deleted_at is None],
+        }
         for memory, user_name in db.execute(query.limit(limit)).all()
     ]
     users = db.scalars(select(User).order_by(User.name)).all()
@@ -340,7 +440,7 @@ def memories_page(
             agents=agents,
             rows=rows,
             filters={
-                "user_id": str(user_id) if user_id else "",
+                "user_id": str(selected_user_id) if selected_user_id else "",
                 "agent_id": agent_id,
                 "q": q,
                 "deleted": deleted,
@@ -350,6 +450,68 @@ def memories_page(
             },
         ),
     )
+
+
+@router.get("/memories/{memory_id}")
+def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+
+    row = db.execute(
+        select(Memory, User.name.label("user_name"))
+        .join(User)
+        .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
+        .where(Memory.id == memory_id)
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记忆不存在。")
+    memory, user_name = row
+    return templates.TemplateResponse(
+        request,
+        "memory_detail.html",
+        base_context(
+            request,
+            session,
+            memory=memory,
+            user_name=user_name,
+            attachments=active_attachments(memory),
+        ),
+    )
+
+
+@router.post("/memories/{memory_id}/update")
+async def update_memory(memory_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    title = form.get("title", "").strip()
+    content = form.get("content", "").strip()
+    detail_path = f"/admin/memories/{memory_id}"
+    if not title:
+        return redirect_to(detail_path, error="标题不能为空。")
+    if len(title) > 512:
+        return redirect_to(detail_path, error="标题不能超过 512 个字符。")
+    if not content:
+        return redirect_to(detail_path, error="正文不能为空。")
+
+    memory = db.scalar(
+        select(Memory)
+        .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
+        .where(Memory.id == memory_id)
+    )
+    if memory is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记忆不存在。")
+
+    memory.title = title
+    memory.content = content
+    memory.search_text = build_search_text(title, content, attachment_search_text(active_attachments(memory)))
+    memory.updated_at = utcnow()
+    db.add(memory)
+    db.commit()
+    return redirect_to(detail_path, notice="记忆已更新。")
 
 
 @router.post("/memories/{memory_id}/delete")
@@ -368,6 +530,17 @@ async def delete_memory(memory_id: uuid.UUID, request: Request, db: Session = De
         db.add(memory)
         db.commit()
     return redirect_to("/admin/memories", notice="记忆已删除。")
+
+
+@router.get("/attachments/{attachment_id}")
+def attachment_preview(attachment_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    attachment = get_attachment_for_admin(db, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在。")
+    return Response(content=attachment.image_bytes, media_type=attachment.mime_type)
 
 
 @router.get("/jobs")

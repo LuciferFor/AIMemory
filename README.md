@@ -22,8 +22,8 @@ docker compose up --build
 Create a user and API key:
 
 ```bash
-docker compose exec api aimemory create-user default
-docker compose exec api aimemory create-api-key default --label local
+docker compose exec api aimemory create-user lucifer
+docker compose exec api aimemory create-api-key lucifer --label local
 ```
 
 Insert memory:
@@ -48,6 +48,32 @@ curl -X POST http://localhost:10011/v1/memories/search \
   -H "Content-Type: application/json" \
   -d '{"agent_id":"assistant","query":"short replies preference","top_k":5}'
 ```
+
+Insert memory with an image attachment. AIMemory accepts base64 in the request,
+decodes it, and stores binary image bytes in PostgreSQL; image retrieval is based
+on the text description, OCR text, and tags you submit:
+
+```bash
+curl -X POST http://localhost:10011/v1/memories \
+  -H "Authorization: Bearer <api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "assistant",
+    "external_id": "image-memory-001",
+    "title": "Reference image",
+    "content": "A reusable visual reference.",
+    "attachments": [{
+      "filename": "reference.png",
+      "mime_type": "image/png",
+      "data_base64": "<base64>",
+      "description": "A dark interface screenshot with an error message.",
+      "ocr_text": "Connection failed",
+      "metadata": {"tags": ["screenshot", "error"]}
+    }]
+  }'
+```
+
+Search responses include attachment metadata and a download URL, not base64.
 
 Build prompt-ready memory context:
 

@@ -9,6 +9,29 @@ AgentId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, 
 ExternalId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=256)]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
 Content = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
+Filename = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
+MimeType = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+AttachmentText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
+AttachmentBase64 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class MemoryAttachmentInput(BaseModel):
+    filename: Filename
+    mime_type: MimeType
+    data_base64: AttachmentBase64
+    description: AttachmentText | None = None
+    ocr_text: AttachmentText | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryAttachmentMeta(BaseModel):
+    attachment_id: UUID
+    filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    description: str | None = None
+    download_url: str
 
 
 class MemoryUpsertRequest(BaseModel):
@@ -18,6 +41,7 @@ class MemoryUpsertRequest(BaseModel):
     content: Content
     metadata: dict[str, Any] = Field(default_factory=dict)
     occurred_at: datetime | None = None
+    attachments: list[MemoryAttachmentInput] | None = None
 
 
 class MemoryUpsertResponse(BaseModel):
@@ -61,6 +85,7 @@ class MemorySearchItem(BaseModel):
     score: float
     score_parts: ScoreParts
     embedding_status: str
+    attachments: list[MemoryAttachmentMeta] = Field(default_factory=list)
 
 
 class MemorySearchResponse(BaseModel):

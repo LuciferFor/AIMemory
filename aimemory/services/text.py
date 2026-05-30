@@ -20,8 +20,8 @@ def split_query_terms(value: str) -> list[str]:
     return sorted(term for term in terms if term)
 
 
-def build_search_text(title: str, content: str) -> str:
-    return normalize_query(f"{title}\n{content}")
+def build_search_text(title: str, content: str, *extra_parts: str) -> str:
+    return normalize_query("\n".join([title, content, *extra_parts]))
 
 
 def weighted_score(

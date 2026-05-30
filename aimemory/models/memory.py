@@ -45,3 +45,4 @@ class Memory(Base):
 
     user = relationship("User", back_populates="memories")
     embedding_jobs = relationship("EmbeddingJob", back_populates="memory")
+    attachments = relationship("MemoryAttachment", back_populates="memory")

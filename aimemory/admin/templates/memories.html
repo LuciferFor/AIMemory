@@ -44,37 +44,83 @@
   </form>
 </section>
 
-<section class="memory-list">
-  {% for row in rows %}
-  {% set memory = row.memory %}
-  <article class="memory-item">
-    <header>
-      <div>
-        <h2>{{ memory.title }}</h2>
-        <p>{{ row.user_name }} / {{ memory.agent_id }} / <code>{{ memory.external_id }}</code></p>
-      </div>
-    </header>
-    <pre>{{ memory.content }}</pre>
-    <details>
-      <summary>元数据</summary>
-      <pre>{{ memory.metadata_json }}</pre>
-    </details>
-    <footer>
-      <span>创建时间 {{ memory.created_at }}</span>
-      <span>更新时间 {{ memory.updated_at }}</span>
-      {% if memory.deleted_at %}<span>删除时间 {{ memory.deleted_at }}</span>{% endif %}
-      <div class="actions">
-        {% if not memory.deleted_at %}
-        <form method="post" action="/admin/memories/{{ memory.id }}/delete" data-confirm="确认删除这条记忆？">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="danger">删除</button>
-        </form>
-        {% endif %}
-      </div>
-    </footer>
-  </article>
-  {% else %}
-  <div class="panel empty">暂无记忆</div>
-  {% endfor %}
+<section class="panel memory-table-panel">
+  <table class="memory-table memory-table-compact">
+    <colgroup>
+      <col class="col-memory">
+      <col class="col-owner">
+      <col class="col-attachments">
+      <col class="col-time">
+      <col class="col-status">
+      <col class="col-actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>记忆</th>
+        <th>归属</th>
+        <th>附件</th>
+        <th>时间</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set memory = row.memory %}
+      <tr class="memory-row {{ 'is-deleted' if memory.deleted_at else '' }}">
+        <td class="memory-title-cell">
+          <strong title="{{ memory.title }}">{{ memory.title }}</strong>
+        </td>
+        <td class="owner-cell">
+          <strong>{{ row.user_name }}</strong>
+          <code title="{{ memory.agent_id }}">{{ short_middle(memory.agent_id, 8, 6) }}</code>
+        </td>
+        <td class="attachment-cell">
+          {% if row.attachments %}
+          <span class="badge">{{ row.attachments|length }} 张</span>
+          <div class="attachment-strip">
+            {% for attachment in row.attachments %}
+            {% if loop.index <= 3 %}
+            <a href="/admin/attachments/{{ attachment.id }}" target="_blank" rel="noopener" title="{{ attachment.filename }}">
+              <img src="/admin/attachments/{{ attachment.id }}" alt="{{ attachment.filename }}">
+            </a>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% else %}
+          <span class="muted">无</span>
+          {% endif %}
+        </td>
+        <td class="time-cell">
+          <div class="time-stack">
+            <span title="{{ full_datetime(memory.created_at) }}"><b>创建</b><time>{{ compact_datetime(memory.created_at) }}</time></span>
+            <span title="{{ full_datetime(memory.updated_at) }}"><b>更新</b><time>{{ compact_datetime(memory.updated_at) }}</time></span>
+          </div>
+        </td>
+        <td class="status-cell">
+          {% if memory.deleted_at %}
+          <span class="badge failed">已删除</span>
+          <span class="deleted-time" title="{{ full_datetime(memory.deleted_at) }}">{{ compact_datetime(memory.deleted_at) }}</span>
+          {% else %}
+          <span class="badge ready">正常</span>
+          {% endif %}
+        </td>
+        <td class="action-cell">
+          <div class="action-buttons">
+            <a class="action-button detail" href="/admin/memories/{{ memory.id }}">详情</a>
+            {% if not memory.deleted_at %}
+            <form method="post" action="/admin/memories/{{ memory.id }}/delete" data-confirm="确认删除这条记忆？">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="action-button danger">删除</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">暂无记忆</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 {% endblock %}

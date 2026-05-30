@@ -1,5 +1,9 @@
+import uuid
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
+from aimemory.admin.auth import COOKIE_NAME, get_serializer
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
@@ -11,6 +15,9 @@ class _Rows:
 
     def all(self) -> list:
         return self._rows
+
+    def one_or_none(self):
+        return self._rows[0] if self._rows else None
 
 
 class _FakeDb:
@@ -24,14 +31,110 @@ class _FakeDb:
         return _Rows([])
 
 
-def _client(monkeypatch) -> TestClient:
+class _EmptyDb(_FakeDb):
+    def execute(self, query) -> _Rows:
+        return _Rows([])
+
+
+class _ApiKeyDb(_FakeDb):
+    def __init__(self, api_key=None) -> None:
+        self.api_key = api_key
+        self.added = []
+        self.committed = False
+
+    def get(self, model, key_id):
+        if self.api_key is not None and self.api_key.id == key_id:
+            return self.api_key
+        return None
+
+    def add(self, value) -> None:
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+class _MemoryDb(_FakeDb):
+    def __init__(self) -> None:
+        self.user_id = uuid.uuid4()
+        self.attachment_id = uuid.uuid4()
+        self.users = [SimpleNamespace(id=self.user_id, name="lucifer")]
+        self.agents = ["agent-1"]
+        attachment = SimpleNamespace(
+            id=self.attachment_id,
+            filename="screen.png",
+            mime_type="image/png",
+            size_bytes=1234,
+            description="截图描述",
+            ocr_text="图片文字",
+            deleted_at=None,
+        )
+        self.memories = [
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                title="测试记忆标题",
+                content="第一行正文，第二行正文，第三行正文。",
+                user_id=self.user_id,
+                agent_id="agent-1",
+                external_id="memory-active",
+                metadata_json={"category": "test"},
+                created_at="2026-05-30 10:00:00+00:00",
+                updated_at="2026-05-30 10:01:00+00:00",
+                deleted_at=None,
+                attachments=[attachment],
+            ),
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                title="已删除记忆",
+                content="已删除正文",
+                user_id=self.user_id,
+                agent_id="agent-1",
+                external_id="memory-deleted",
+                metadata_json={},
+                created_at="2026-05-30 09:00:00+00:00",
+                updated_at="2026-05-30 09:01:00+00:00",
+                deleted_at="2026-05-30 09:02:00+00:00",
+                attachments=[],
+            ),
+        ]
+        self.scalars_calls = 0
+        self.added = []
+        self.committed = False
+
+    def execute(self, query) -> _Rows:
+        return _Rows([(memory, "lucifer") for memory in self.memories])
+
+    def scalar(self, query):
+        return self.memories[0]
+
+    def scalars(self, query) -> _Rows:
+        self.scalars_calls += 1
+        if self.scalars_calls == 1:
+            return _Rows(self.users)
+        return _Rows(self.agents)
+
+    def add(self, value) -> None:
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+def _client(monkeypatch, db=None) -> TestClient:
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "secret")
     monkeypatch.setenv("ADMIN_SESSION_SECRET", "test-secret")
     get_settings.cache_clear()
     app = create_app()
-    app.dependency_overrides[get_db] = lambda: _FakeDb()
+    app.dependency_overrides[get_db] = lambda: db or _FakeDb()
     return TestClient(app)
+
+
+def _login_and_csrf(client: TestClient) -> str:
+    client.post("/admin/login", data={"username": "admin", "password": "secret", "next": "/admin"})
+    token = client.cookies.get(COOKIE_NAME)
+    assert token is not None
+    return get_serializer().loads(token)["csrf"]
 
 
 def test_admin_requires_login(monkeypatch) -> None:
@@ -108,3 +211,188 @@ def test_admin_jobs_page_explains_disabled_embedding(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "不再创建向量任务" in response.text
+
+
+def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
+    db = _MemoryDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get("/admin/memories")
+
+    assert response.status_code == 200
+    assert "memory-table" in response.text
+    assert "col-actions" in response.text
+    assert "action-buttons" in response.text
+    assert "action-button detail" in response.text
+    assert "action-button danger" in response.text
+    assert "测试记忆标题" in response.text
+    assert "agent-1" in response.text
+    assert "第一行正文" not in response.text
+    assert "memory-active" not in response.text
+    assert f"/admin/memories/{db.memories[0].id}" in response.text
+    assert "05-30 18:00" in response.text
+    assert f"/admin/attachments/{db.attachment_id}" in response.text
+    assert "已删除" in response.text
+    assert response.text.count('data-confirm="确认删除这条记忆？"') == 1
+
+
+def test_admin_memories_search_accepts_empty_user_id(monkeypatch) -> None:
+    db = _MemoryDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get("/admin/memories?user_id=&agent_id=&q=&deleted=active&since=&until=&limit=50")
+
+    assert response.status_code == 200
+    assert "测试记忆标题" in response.text
+
+
+def test_admin_api_keys_filter_accepts_empty_user_id(monkeypatch) -> None:
+    client = _client(monkeypatch, db=_EmptyDb())
+    _login_and_csrf(client)
+
+    response = client.get("/admin/api-keys?user_id=")
+
+    assert response.status_code == 200
+    assert "暂无接口密钥" in response.text
+
+
+def test_admin_memory_detail_page_shows_full_memory(monkeypatch) -> None:
+    db = _MemoryDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get(f"/admin/memories/{db.memories[0].id}")
+
+    assert response.status_code == 200
+    assert "测试记忆标题" in response.text
+    assert "第一行正文，第二行正文，第三行正文。" in response.text
+    assert "memory_id" in response.text
+    assert str(db.memories[0].id) in response.text
+    assert "agent-1" in response.text
+    assert "memory-active" in response.text
+    assert "category" in response.text
+    assert "2026-05-30 18:00:00 北京时间" in response.text
+    assert f"/admin/attachments/{db.attachment_id}" in response.text
+    assert "screen.png" in response.text
+
+
+def test_admin_can_update_memory_title_and_content(monkeypatch) -> None:
+    db = _MemoryDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/memories/{db.memories[0].id}/update",
+        data={"csrf_token": csrf, "title": " 新标题 ", "content": " 新正文 "},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/admin/memories/{db.memories[0].id}")
+    assert db.memories[0].title == "新标题"
+    assert db.memories[0].content == "新正文"
+    assert "新标题" in db.memories[0].search_text
+    assert "新正文" in db.memories[0].search_text
+    assert "screen.png" in db.memories[0].search_text
+    assert db.committed is True
+
+
+def test_admin_rejects_invalid_memory_update(monkeypatch) -> None:
+    db = _MemoryDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/memories/{db.memories[0].id}/update",
+        data={"csrf_token": csrf, "title": "", "content": "正文"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert db.memories[0].title == "测试记忆标题"
+    assert db.committed is False
+
+
+def test_admin_can_update_api_key_label(monkeypatch) -> None:
+    key_id = uuid.uuid4()
+    api_key = SimpleNamespace(id=key_id, label="旧标签")
+    db = _ApiKeyDb(api_key)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/api-keys/{key_id}/label",
+        data={"csrf_token": csrf, "label": "  新标签  ", "selected_user_id": "lucifer"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/api-keys")
+    assert "user_id=lucifer" in response.headers["location"]
+    assert api_key.label == "新标签"
+    assert db.committed is True
+
+
+def test_admin_can_clear_api_key_label(monkeypatch) -> None:
+    key_id = uuid.uuid4()
+    api_key = SimpleNamespace(id=key_id, label="旧标签")
+    db = _ApiKeyDb(api_key)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/api-keys/{key_id}/label",
+        data={"csrf_token": csrf, "label": "   "},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert api_key.label is None
+    assert db.committed is True
+
+
+def test_admin_rejects_overlong_api_key_label(monkeypatch) -> None:
+    key_id = uuid.uuid4()
+    api_key = SimpleNamespace(id=key_id, label="旧标签")
+    db = _ApiKeyDb(api_key)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/api-keys/{key_id}/label",
+        data={"csrf_token": csrf, "label": "x" * 129},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/api-keys")
+    assert api_key.label == "旧标签"
+    assert db.committed is False
+
+
+def test_admin_update_api_key_label_requires_login(monkeypatch) -> None:
+    key_id = uuid.uuid4()
+    db = _ApiKeyDb(SimpleNamespace(id=key_id, label="旧标签"))
+    client = _client(monkeypatch, db=db)
+
+    response = client.post(f"/admin/api-keys/{key_id}/label", data={"label": "新标签"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/login")
+    assert db.committed is False
+
+
+def test_admin_update_api_key_label_missing_key_returns_404(monkeypatch) -> None:
+    key_id = uuid.uuid4()
+    client = _client(monkeypatch, db=_ApiKeyDb())
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/api-keys/{key_id}/label",
+        data={"csrf_token": csrf, "label": "新标签"},
+    )
+
+    assert response.status_code == 404

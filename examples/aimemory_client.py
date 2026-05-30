@@ -2,22 +2,25 @@
 AIMemory client for model-side memory access.
 
 Usage:
-    Set AIMEMORY_API_KEY in the environment, or replace DEFAULT_API_KEY below.
+    Set AIMEMORY_API_KEY in the environment before use.
     Import this file from your AI runtime and call search_memories/write_memory.
 """
 
 from __future__ import annotations
 
 import json
+import base64
+import mimetypes
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 BASE_URL = os.getenv("AIMEMORY_BASE_URL", "http://192.168.31.11:10011")
-DEFAULT_API_KEY = "aim_jmiJcOXdxPC7i-_JtDRp4YysqlZRz8r08rrz83jkQ5M"
+DEFAULT_API_KEY = ""
 API_KEY = os.getenv("AIMEMORY_API_KEY", DEFAULT_API_KEY)
 
 # This identifies this AI/agent's isolated memory space.
@@ -29,6 +32,9 @@ class AIMemoryError(RuntimeError):
 
 
 def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not API_KEY:
+        raise AIMemoryError("AIMEMORY_API_KEY is required")
+
     body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = Request(
         f"{BASE_URL}{path}",
@@ -97,6 +103,7 @@ def write_memory(
     content: str,
     external_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Create or update one memory after the model decides it is worth saving."""
     if external_id is None:
@@ -111,8 +118,31 @@ def write_memory(
             "title": title,
             "content": content,
             "metadata": metadata or {},
+            **({"attachments": attachments} if attachments is not None else {}),
         },
     )
+
+
+def image_attachment_from_file(
+    path: str | Path,
+    description: str | None = None,
+    ocr_text: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    mime_type: str | None = None,
+) -> dict[str, Any]:
+    """Build one AIMemory image attachment from a local image file."""
+    image_path = Path(path)
+    detected_mime = mime_type or mimetypes.guess_type(image_path.name)[0]
+    if detected_mime not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+        raise AIMemoryError(f"Unsupported image MIME type: {detected_mime}")
+    return {
+        "filename": image_path.name,
+        "mime_type": detected_mime,
+        "data_base64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
+        "description": description,
+        "ocr_text": ocr_text,
+        "metadata": metadata or {},
+    }
 
 
 def delete_memory(external_id: str) -> bool:

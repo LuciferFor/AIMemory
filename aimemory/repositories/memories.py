@@ -1,18 +1,35 @@
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from aimemory.models.memory import Memory
+from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.schemas.memory import MemorySearchRequest, MemoryUpsertRequest
+from aimemory.services.attachments import (
+    DecodedAttachment,
+    attachment_search_text,
+    decode_attachment_inputs,
+)
 from aimemory.services.text import build_search_text, split_query_terms
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SearchAttachment:
+    attachment_id: uuid.UUID
+    filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    description: str | None
+    ocr_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +44,7 @@ class SearchResult:
     score: float
     score_parts: dict[str, float]
     embedding_status: str
+    attachments: list[SearchAttachment] = field(default_factory=list)
 
 
 def utcnow() -> datetime:
@@ -34,6 +52,7 @@ def utcnow() -> datetime:
 
 
 def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest) -> tuple[Memory, str]:
+    decoded_attachments = decode_attachment_inputs(payload.attachments)
     existing = db.scalar(
         select(Memory).where(
             Memory.user_id == user_id,
@@ -48,15 +67,23 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
         existing.content = payload.content
         existing.metadata_json = payload.metadata
         existing.occurred_at = payload.occurred_at
-        existing.search_text = build_search_text(payload.title, payload.content)
         existing.embedding = None
         existing.embedding_status = "disabled"
         existing.embedding_error = None
         existing.updated_at = utcnow()
         db.add(existing)
         db.flush()
+        if payload.attachments is not None:
+            _replace_attachments(db, existing, user_id, decoded_attachments)
+            attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
+        else:
+            attachment_text = attachment_search_text(_active_attachments(db, existing.id))
+        existing.search_text = build_search_text(payload.title, payload.content, attachment_text)
+        db.add(existing)
+        db.flush()
         return existing, "updated"
 
+    attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
     memory = Memory(
         user_id=user_id,
         agent_id=payload.agent_id,
@@ -65,11 +92,14 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
         content=payload.content,
         metadata_json=payload.metadata,
         occurred_at=payload.occurred_at,
-        search_text=build_search_text(payload.title, payload.content),
+        search_text=build_search_text(payload.title, payload.content, attachment_text),
         embedding_status="disabled",
     )
     db.add(memory)
     db.flush()
+    if decoded_attachments:
+        _add_attachments(db, memory, user_id, decoded_attachments)
+        db.flush()
     return memory, "created"
 
 
@@ -87,9 +117,38 @@ def soft_delete_memory(db: Session, user_id: uuid.UUID, agent_id: str, external_
 
     memory.deleted_at = utcnow()
     memory.updated_at = utcnow()
+    for attachment in _active_attachments(db, memory.id):
+        attachment.deleted_at = utcnow()
+        db.add(attachment)
     db.add(memory)
     db.flush()
     return True
+
+
+def get_attachment_for_user(db: Session, user_id: uuid.UUID, attachment_id: uuid.UUID) -> MemoryAttachment | None:
+    return db.scalar(
+        select(MemoryAttachment)
+        .join(Memory)
+        .where(
+            MemoryAttachment.id == attachment_id,
+            MemoryAttachment.user_id == user_id,
+            MemoryAttachment.deleted_at.is_(None),
+            Memory.user_id == user_id,
+            Memory.deleted_at.is_(None),
+        )
+    )
+
+
+def get_attachment_for_admin(db: Session, attachment_id: uuid.UUID) -> MemoryAttachment | None:
+    return db.scalar(
+        select(MemoryAttachment)
+        .join(Memory)
+        .where(
+            MemoryAttachment.id == attachment_id,
+            MemoryAttachment.deleted_at.is_(None),
+            Memory.deleted_at.is_(None),
+        )
+    )
 
 
 def search_memories(
@@ -111,7 +170,9 @@ def search_memories(
     where_sql = _build_common_where(payload, params)
     sql = _text_search_sql(where_sql)
     rows = db.execute(text(sql), params).mappings().all()
-    return [_row_to_result(row) for row in rows]
+    results = [_row_to_result(row) for row in rows]
+    attachments_by_memory = _attachments_for_memories(db, [result.memory_id for result in results])
+    return [replace(result, attachments=attachments_by_memory.get(result.memory_id, [])) for result in results]
 
 
 def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) -> str:
@@ -249,4 +310,94 @@ def _row_to_result(row: Any) -> SearchResult:
             "fuzzy": float(row["fuzzy_score"] or 0.0),
         },
         embedding_status="disabled",
+        attachments=[],
     )
+
+
+def _replace_attachments(
+    db: Session,
+    memory: Memory,
+    user_id: uuid.UUID,
+    decoded_attachments: list[DecodedAttachment],
+) -> None:
+    now = utcnow()
+    for attachment in _active_attachments(db, memory.id):
+        attachment.deleted_at = now
+        db.add(attachment)
+    _add_attachments(db, memory, user_id, decoded_attachments)
+
+
+def _add_attachments(
+    db: Session,
+    memory: Memory,
+    user_id: uuid.UUID,
+    decoded_attachments: list[DecodedAttachment],
+) -> None:
+    for decoded in decoded_attachments:
+        db.add(
+            MemoryAttachment(
+                memory_id=memory.id,
+                user_id=user_id,
+                filename=decoded.filename,
+                mime_type=decoded.mime_type,
+                size_bytes=decoded.size_bytes,
+                sha256=decoded.sha256,
+                image_bytes=decoded.image_bytes,
+                description=decoded.description,
+                ocr_text=decoded.ocr_text,
+                metadata_json=decoded.metadata,
+            )
+        )
+
+
+def _active_attachments(db: Session, memory_id: uuid.UUID) -> list[MemoryAttachment]:
+    return list(
+        db.scalars(
+            select(MemoryAttachment)
+            .options(defer(MemoryAttachment.image_bytes))
+            .where(
+                MemoryAttachment.memory_id == memory_id,
+                MemoryAttachment.deleted_at.is_(None),
+            )
+            .order_by(MemoryAttachment.created_at)
+        ).all()
+    )
+
+
+def _attachments_for_memories(
+    db: Session,
+    memory_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, list[SearchAttachment]]:
+    if not memory_ids:
+        return {}
+    rows = db.execute(
+        select(
+            MemoryAttachment.memory_id,
+            MemoryAttachment.id,
+            MemoryAttachment.filename,
+            MemoryAttachment.mime_type,
+            MemoryAttachment.size_bytes,
+            MemoryAttachment.sha256,
+            MemoryAttachment.description,
+            MemoryAttachment.ocr_text,
+        )
+        .where(
+            MemoryAttachment.memory_id.in_(memory_ids),
+            MemoryAttachment.deleted_at.is_(None),
+        )
+        .order_by(MemoryAttachment.created_at)
+    ).mappings().all()
+    grouped: dict[uuid.UUID, list[SearchAttachment]] = {}
+    for attachment in rows:
+        grouped.setdefault(attachment["memory_id"], []).append(
+            SearchAttachment(
+                attachment_id=attachment["id"],
+                filename=attachment["filename"],
+                mime_type=attachment["mime_type"],
+                size_bytes=attachment["size_bytes"],
+                sha256=attachment["sha256"],
+                description=attachment["description"],
+                ocr_text=attachment["ocr_text"],
+            )
+        )
+    return grouped

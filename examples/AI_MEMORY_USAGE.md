@@ -74,6 +74,30 @@ write_memory(
 )
 ```
 
+## 写入图片记忆
+
+图片通过 base64 上传，但服务端会解码后保存为数据库二进制附件。图片本身不会被服务端识别；如果希望后续能搜到图片，请提交 `description`、`ocr_text` 或 tags。
+
+```python
+from aimemory_client import image_attachment_from_file, write_memory
+
+write_memory(
+    external_id="image-reference-ui-error",
+    title="UI 报错截图",
+    content="一张可复用的界面报错参考图。",
+    attachments=[
+        image_attachment_from_file(
+            "/path/to/error.png",
+            description="深色界面里显示连接失败错误。",
+            ocr_text="Connection failed",
+            metadata={"tags": ["截图", "报错"]},
+        )
+    ],
+)
+```
+
+查询结果只返回附件元数据和下载地址，不会把 base64 塞进模型上下文。
+
 如果需要自己指定唯一 ID：
 
 ```python
@@ -137,7 +161,7 @@ print(policy["prompt"])
 
 ## 环境变量
 
-默认脚本已经写好服务地址、API Key 和 Agent ID。也可以用环境变量覆盖：
+默认脚本已经写好服务地址和 Agent ID。API Key 必须通过环境变量提供，不要硬编码到脚本里：
 
 ```bash
 export AIMEMORY_BASE_URL="http://192.168.31.11:10011"

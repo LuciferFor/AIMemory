@@ -1,16 +1,19 @@
 import logging
 import time
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, Response
 
 from aimemory.api.deps import get_current_user
 from aimemory.db.session import get_db
 from aimemory.models.user import User
 from aimemory.repositories.memories import (
+    SearchAttachment,
+    get_attachment_for_user,
     search_memories,
     soft_delete_memory,
     upsert_memory,
@@ -21,6 +24,7 @@ from aimemory.schemas.memory import (
     MemoryContextResponse,
     MemoryDeleteRequest,
     MemoryDeleteResponse,
+    MemoryAttachmentMeta,
     MemorySearchItem,
     MemorySearchRequest,
     MemorySearchResponse,
@@ -29,6 +33,7 @@ from aimemory.schemas.memory import (
     MemoryWritePolicyResponse,
     ScoreParts,
 )
+from aimemory.services.attachments import AttachmentValidationError
 from aimemory.services.text import normalize_query
 
 logger = logging.getLogger(__name__)
@@ -103,11 +108,18 @@ def write_memory(
     try:
         memory, action = upsert_memory(db, current_user.id, payload)
         db.commit()
+    except AttachmentValidationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except IntegrityError:
         retried_after_integrity_error = True
         db.rollback()
-        memory, action = upsert_memory(db, current_user.id, payload)
-        db.commit()
+        try:
+            memory, action = upsert_memory(db, current_user.id, payload)
+            db.commit()
+        except AttachmentValidationError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     logger.info(
         "memory.write",
@@ -119,6 +131,8 @@ def write_memory(
             "action": action,
             "memory_id": memory.id,
             "indexing_mode": "text",
+            "attachment_count": len(payload.attachments or []),
+            "attachments_replaced": payload.attachments is not None,
             "retried_after_integrity_error": retried_after_integrity_error,
             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
         },
@@ -164,6 +178,7 @@ def search_memory(
                 score=result.score,
                 score_parts=ScoreParts(**result.score_parts),
                 embedding_status=result.embedding_status,
+                attachments=[attachment_meta(attachment) for attachment in result.attachments],
             )
             for result in results
         ]
@@ -228,6 +243,29 @@ def get_write_policy(
     )
 
 
+@router.get("/attachments/{attachment_id}")
+def download_attachment(
+    attachment_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    attachment = get_attachment_for_user(db, current_user.id, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在。")
+    logger.info(
+        "memory.attachment_download",
+        extra={
+            "event": "memory.attachment_download",
+            "user_id": current_user.id,
+            "attachment_id": attachment.id,
+            "mime_type": attachment.mime_type,
+            "size_bytes": attachment.size_bytes,
+            "sha256": attachment.sha256,
+        },
+    )
+    return Response(content=attachment.image_bytes, media_type=attachment.mime_type)
+
+
 @router.delete("", response_model=MemoryDeleteResponse)
 def delete_memory(
     payload: MemoryDeleteRequest,
@@ -271,7 +309,8 @@ def build_context_text(results: list[Any], max_chars: int) -> str:
         return text[:max_chars].rstrip()
 
     for index, result in enumerate(results, start=1):
-        entry = f"\n\n{index}. {result.title}\n{result.content}"
+        attachment_text = attachment_context_text(result.attachments)
+        entry = f"\n\n{index}. {result.title}\n{result.content}{attachment_text}"
         if len(text) + len(entry) <= max_chars:
             text += entry
             continue
@@ -282,6 +321,32 @@ def build_context_text(results: list[Any], max_chars: int) -> str:
         break
 
     return text[:max_chars].rstrip()
+
+
+def attachment_meta(attachment: SearchAttachment) -> MemoryAttachmentMeta:
+    return MemoryAttachmentMeta(
+        attachment_id=attachment.attachment_id,
+        filename=attachment.filename,
+        mime_type=attachment.mime_type,
+        size_bytes=attachment.size_bytes,
+        sha256=attachment.sha256,
+        description=attachment.description,
+        download_url=f"/v1/memories/attachments/{attachment.attachment_id}",
+    )
+
+
+def attachment_context_text(attachments: list[SearchAttachment]) -> str:
+    lines = []
+    for attachment in attachments:
+        label = attachment.filename
+        if attachment.description:
+            label = f"{label}：{attachment.description}"
+        elif attachment.ocr_text:
+            label = f"{label}：{attachment.ocr_text}"
+        lines.append(f"- {label}")
+    if not lines:
+        return ""
+    return "\n图片附件：\n" + "\n".join(lines)
 
 
 health_router = APIRouter(tags=["health"])

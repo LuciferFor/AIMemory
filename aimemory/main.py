@@ -43,6 +43,8 @@ def create_app() -> FastAPI:
 
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
         response.headers[REQUEST_ID_HEADER] = request_id
+        if request.url.path.startswith("/admin/static/"):
+            response.headers["Cache-Control"] = "no-cache, max-age=0"
         if _should_log_request(request.url.path, response.status_code, duration_ms, settings.slow_request_ms):
             level = logging.WARNING if response.status_code >= 500 or duration_ms >= settings.slow_request_ms else logging.INFO
             request_logger.log(
