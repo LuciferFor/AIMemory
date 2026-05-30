@@ -8,31 +8,5 @@
   <div class="metric"><span>接口密钥</span><strong>{{ stats.api_keys }}</strong></div>
   <div class="metric"><span>有效记忆</span><strong>{{ stats.memories }}</strong></div>
   <div class="metric"><span>已删除记忆</span><strong>{{ stats.deleted_memories }}</strong></div>
-  <div class="metric"><span>已就绪向量</span><strong>{{ stats.ready }}</strong></div>
-  <div class="metric"><span>待处理向量</span><strong>{{ stats.pending }}</strong></div>
-  <div class="metric"><span>失败向量</span><strong>{{ stats.failed }}</strong></div>
-  <div class="metric"><span>任务总数</span><strong>{{ stats.jobs }}</strong></div>
-</section>
-
-<section class="panel">
-  <div class="section-head">
-    <h2>最近任务</h2>
-    <a href="/admin/jobs">查看全部</a>
-  </div>
-  <table>
-    <thead><tr><th>ID</th><th>状态</th><th>尝试次数</th><th>更新时间</th></tr></thead>
-    <tbody>
-      {% for job in recent_jobs %}
-      <tr>
-        <td><code>{{ job.id }}</code></td>
-        <td><span class="badge {{ job.status }}">{{ status_label(job.status) }}</span></td>
-        <td>{{ job.attempts }}</td>
-        <td>{{ job.updated_at }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="4" class="empty">暂无任务</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
 </section>
 {% endblock %}

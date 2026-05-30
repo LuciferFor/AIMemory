@@ -24,14 +24,6 @@
     <label>关键词
       <input name="q" value="{{ filters.q }}">
     </label>
-    <label>向量状态
-      <select name="embedding_status">
-        <option value="">全部</option>
-        {% for status_name in ["pending", "ready", "failed"] %}
-        <option value="{{ status_name }}" {{ "selected" if filters.embedding_status == status_name else "" }}>{{ status_label(status_name) }}</option>
-        {% endfor %}
-      </select>
-    </label>
     <label>删除状态
       <select name="deleted">
         {% for mode in ["active", "deleted", "all"] %}
@@ -61,7 +53,6 @@
         <h2>{{ memory.title }}</h2>
         <p>{{ row.user_name }} / {{ memory.agent_id }} / <code>{{ memory.external_id }}</code></p>
       </div>
-      <span class="badge {{ memory.embedding_status }}">{{ status_label(memory.embedding_status) }}</span>
     </header>
     <pre>{{ memory.content }}</pre>
     <details>
@@ -74,10 +65,6 @@
       {% if memory.deleted_at %}<span>删除时间 {{ memory.deleted_at }}</span>{% endif %}
       <div class="actions">
         {% if not memory.deleted_at %}
-        <form method="post" action="/admin/memories/{{ memory.id }}/requeue">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit">重建向量</button>
-        </form>
         <form method="post" action="/admin/memories/{{ memory.id }}/delete" data-confirm="确认删除这条记忆？">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="danger">删除</button>

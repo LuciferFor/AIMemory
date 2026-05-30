@@ -9,6 +9,7 @@ from aimemory.api import routes
 from aimemory.db.session import get_db
 from aimemory.main import create_app
 from aimemory.repositories.memories import SearchResult
+from aimemory.schemas.memory import MemorySearchRequest
 
 
 class _FakeDb:
@@ -62,8 +63,8 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
         created_at=now,
         updated_at=now,
         score=0.91,
-        score_parts={"semantic": 0.8, "keyword": 0.1, "fuzzy": 0.01},
-        embedding_status="ready",
+        score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.01},
+        embedding_status="disabled",
     )
     client = _client_with_user()
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
@@ -75,7 +76,7 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     assert "以下是与当前请求可能相关的长期记忆" in body["context_text"]
     assert "回复偏好：简短自然" in body["context_text"]
     assert body["items"][0]["external_id"] == "pref-short-replies"
-    assert body["items"][0]["embedding_status"] == "ready"
+    assert body["items"][0]["embedding_status"] == "disabled"
 
 
 def test_context_respects_max_chars(monkeypatch) -> None:
@@ -89,8 +90,8 @@ def test_context_respects_max_chars(monkeypatch) -> None:
         created_at=now,
         updated_at=now,
         score=0.8,
-        score_parts={"semantic": 0.7, "keyword": 0.1, "fuzzy": 0.0},
-        embedding_status="ready",
+        score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.0},
+        embedding_status="disabled",
     )
     client = _client_with_user()
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
@@ -114,3 +115,21 @@ def test_write_policy_returns_standard_fields() -> None:
     assert set(body) == {"prompt", "output_schema", "required_fields", "rules", "forbidden"}
     assert body["required_fields"] == ["external_id", "title", "content", "metadata"]
     assert "密码" in body["forbidden"]
+
+
+def test_search_results_uses_text_only(monkeypatch) -> None:
+    calls = []
+
+    def _fake_search_memories(*args):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
+    payload = MemorySearchRequest(agent_id="assistant", query="自然 回复")
+
+    results, used_vector, duration_ms = routes._search_results(_FakeDb(), SimpleNamespace(id=uuid4()), payload)
+
+    assert results == []
+    assert used_vector is False
+    assert duration_ms >= 0
+    assert len(calls[0]) == 4

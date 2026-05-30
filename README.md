@@ -1,16 +1,15 @@
 # AIMemory
 
 AIMemory is a FastAPI service for long-term AI memory. It stores memories by
-`user_id + agent_id`, supports idempotent writes through `external_id`, creates
-embeddings asynchronously with a Celery worker, and searches with hybrid vector,
-full-text, and fuzzy matching.
+`user_id + agent_id`, supports idempotent writes through `external_id`, and
+searches with PostgreSQL full-text, trigram fuzzy matching, and local query
+tokenization. It does not require an external AI or embedding provider.
 
 ## Stack
 
 - Python 3.12+ with FastAPI
-- PostgreSQL 16 with pgvector and pg_trgm
-- Redis and Celery for embedding jobs
-- External OpenAI-compatible embeddings API
+- PostgreSQL 16 with pg_trgm text/fuzzy indexes
+- Redis for runtime health checks and future async work
 - Alembic migrations
 
 ## Quick start
@@ -105,34 +104,26 @@ All files are UTF-8. Database initialization in Docker Compose uses UTF8.
 Important environment variables:
 
 - `DATABASE_URL`: SQLAlchemy PostgreSQL URL.
-- `REDIS_URL`: Celery broker/result backend URL.
-- `EMBEDDING_BASE_URL`: OpenAI-compatible API base, for example `https://api.openai.com/v1`.
-- `EMBEDDING_API_KEY`: embedding provider API key.
-- `EMBEDDING_MODEL`: embedding model name.
-- `EMBEDDING_DIM`: one fixed vector dimension for this deployment.
-- `EMBEDDING_INCLUDE_DIMENSIONS`: send `dimensions` in embedding requests when supported.
+- `REDIS_URL`: Redis URL for health checks and future async work.
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`: admin web login.
 - `LOG_LEVEL`: logging level, default `INFO`.
 - `LOG_FORMAT`: `json` for Docker/production logs, or `text` for local debugging.
 - `SLOW_REQUEST_MS`: request duration threshold logged as warning.
-- `SLOW_EMBEDDING_MS`: embedding request duration threshold logged as warning.
 
 ## Logging
 
-API and worker logs are written to stdout. In Docker, use:
+API logs are written to stdout. In Docker, use:
 
 ```bash
 docker compose logs -f api
-docker compose logs -f worker
 ```
 
 Each API response includes `X-Request-ID`; pass the same header from a client to
 trace a request through logs. Normal `/healthz` and `/admin/static/*` requests are
 not logged at INFO level.
 
-Logs intentionally do not include API keys, admin passwords, embedding keys,
-full memory content, metadata bodies, embedding input text, or vector values.
-Business logs include IDs, status, counts, timings, and embedding job results.
+Logs intentionally do not include API keys, admin passwords, full memory content,
+or metadata bodies. Business logs include IDs, status, counts, and timings.
 
 ## Development
 
@@ -148,7 +139,6 @@ For local PostgreSQL:
 ```bash
 alembic upgrade head
 uvicorn aimemory.main:create_app --factory --reload --port 10011
-celery -A aimemory.worker.celery_app:celery_app worker --loglevel=INFO
 ```
 
 Useful admin commands:
@@ -157,5 +147,4 @@ Useful admin commands:
 aimemory create-user <name>
 aimemory create-api-key <name> --label <label>
 aimemory revoke-api-key <key-prefix>
-aimemory requeue-pending --limit 100
 ```

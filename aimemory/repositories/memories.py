@@ -8,10 +8,9 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from aimemory.models.embedding_job import EmbeddingJob
 from aimemory.models.memory import Memory
 from aimemory.schemas.memory import MemorySearchRequest, MemoryUpsertRequest
-from aimemory.services.text import build_search_text
+from aimemory.services.text import build_search_text, split_query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,7 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
         existing.occurred_at = payload.occurred_at
         existing.search_text = build_search_text(payload.title, payload.content)
         existing.embedding = None
-        existing.embedding_status = "pending"
+        existing.embedding_status = "disabled"
         existing.embedding_error = None
         existing.updated_at = utcnow()
         db.add(existing)
@@ -67,7 +66,7 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
         metadata_json=payload.metadata,
         occurred_at=payload.occurred_at,
         search_text=build_search_text(payload.title, payload.content),
-        embedding_status="pending",
+        embedding_status="disabled",
     )
     db.add(memory)
     db.flush()
@@ -93,90 +92,24 @@ def soft_delete_memory(db: Session, user_id: uuid.UUID, agent_id: str, external_
     return True
 
 
-def create_embedding_job(db: Session, memory_id: uuid.UUID) -> EmbeddingJob:
-    job = EmbeddingJob(memory_id=memory_id, status="pending", attempts=0)
-    db.add(job)
-    db.flush()
-    return job
-
-
-def get_memory_for_embedding(db: Session, memory_id: uuid.UUID) -> Memory | None:
-    return db.scalar(
-        select(Memory).where(
-            Memory.id == memory_id,
-            Memory.deleted_at.is_(None),
-        )
-    )
-
-
-def get_embedding_job(db: Session, job_id: uuid.UUID | None) -> EmbeddingJob | None:
-    if job_id is None:
-        return None
-    return db.get(EmbeddingJob, job_id)
-
-
-def mark_embedding_started(job: EmbeddingJob | None) -> None:
-    if job is not None:
-        job.status = "running"
-        job.attempts += 1
-        job.updated_at = utcnow()
-
-
-def mark_embedding_succeeded(memory: Memory, job: EmbeddingJob | None, vector: list[float]) -> None:
-    memory.embedding = vector
-    memory.embedding_status = "ready"
-    memory.embedding_error = None
-    memory.updated_at = utcnow()
-    if job is not None:
-        job.status = "succeeded"
-        job.last_error = None
-        job.updated_at = utcnow()
-
-
-def mark_embedding_failed(memory: Memory | None, job: EmbeddingJob | None, error: str, retrying: bool) -> None:
-    if memory is not None:
-        memory.embedding_status = "pending" if retrying else "failed"
-        memory.embedding_error = error[:2000]
-        memory.updated_at = utcnow()
-    if job is not None:
-        job.status = "retrying" if retrying else "failed"
-        job.last_error = error[:2000]
-        job.updated_at = utcnow()
-
-
-def mark_embedding_skipped(job: EmbeddingJob | None, reason: str) -> None:
-    if job is not None:
-        job.status = "skipped"
-        job.last_error = reason[:2000]
-        job.updated_at = utcnow()
-
-
-def vector_to_sql(value: list[float]) -> str:
-    return "[" + ",".join(f"{part:.10f}" for part in value) + "]"
-
-
 def search_memories(
     db: Session,
     user_id: uuid.UUID,
     payload: MemorySearchRequest,
     normalized_query: str,
-    query_vector: list[float] | None,
 ) -> list[SearchResult]:
+    query_terms = split_query_terms(normalized_query) or [normalized_query]
     params: dict[str, Any] = {
         "user_id": user_id,
         "agent_id": payload.agent_id,
         "query": normalized_query,
+        "terms": query_terms,
         "like_query": f"%{normalized_query}%",
         "top_k": payload.top_k,
         "candidate_limit": max(payload.top_k * 8, 50),
     }
     where_sql = _build_common_where(payload, params)
-    if query_vector:
-        params["query_vector"] = vector_to_sql(query_vector)
-        sql = _vector_search_sql(where_sql)
-    else:
-        sql = _text_search_sql(where_sql)
-
+    sql = _text_search_sql(where_sql)
     rows = db.execute(text(sql), params).mappings().all()
     return [_row_to_result(row) for row in rows]
 
@@ -199,83 +132,66 @@ def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) ->
     return " AND ".join(clauses)
 
 
-def _vector_search_sql(where_sql: str) -> str:
+def _text_search_sql(where_sql: str) -> str:
     return f"""
-WITH vector_candidates AS (
-    SELECT
-        m.id,
-        GREATEST(0.0, 1.0 - (m.embedding <=> CAST(:query_vector AS vector))) AS semantic_score
-    FROM memories m
-    WHERE {where_sql}
-      AND m.embedding IS NOT NULL
-    ORDER BY m.embedding <=> CAST(:query_vector AS vector)
-    LIMIT :candidate_limit
+WITH query_terms AS (
+    SELECT term
+    FROM unnest(CAST(:terms AS text[])) AS query_term(term)
+    WHERE length(term) > 0
+),
+term_stats AS (
+    SELECT GREATEST(count(*), 1)::float AS term_count FROM query_terms
 ),
 text_candidates AS (
     SELECT
         m.id,
-        ts_rank_cd(to_tsvector('simple', m.search_text), plainto_tsquery('simple', :query)) AS keyword_score,
-        similarity(m.search_text, :query) AS fuzzy_score
-    FROM memories m
-    WHERE {where_sql}
-      AND (
-        to_tsvector('simple', m.search_text) @@ plainto_tsquery('simple', :query)
-        OR m.search_text % :query
-        OR m.search_text ILIKE :like_query
-      )
-    ORDER BY keyword_score DESC, fuzzy_score DESC
-    LIMIT :candidate_limit
-),
-candidate_ids AS (
-    SELECT id FROM vector_candidates
-    UNION
-    SELECT id FROM text_candidates
-),
-scored AS (
-    SELECT
-        m.id AS memory_id,
-        m.external_id,
-        m.title,
-        m.content,
-        m."metadata" AS metadata,
-        m.created_at,
-        m.updated_at,
-        m.embedding_status,
-        COALESCE(vc.semantic_score, 0.0) AS semantic_score,
         COALESCE(ts_rank_cd(to_tsvector('simple', m.search_text), plainto_tsquery('simple', :query)), 0.0) AS keyword_score,
-        COALESCE(similarity(m.search_text, :query), 0.0) AS fuzzy_score
+        GREATEST(
+            COALESCE(similarity(m.search_text, :query), 0.0),
+            COALESCE(similarity(m.title, :query), 0.0)
+        ) AS fuzzy_score,
+        CASE
+            WHEN m.search_text ILIKE :like_query OR m.title ILIKE :like_query THEN 1.0
+            ELSE 0.0
+        END AS exact_score,
+        GREATEST(
+            CASE WHEN m.title ILIKE :like_query THEN 1.0 ELSE 0.0 END,
+            COALESCE(similarity(m.title, :query), 0.0)
+        ) AS title_score,
+        COALESCE(
+            (
+                SELECT count(*)::float
+                FROM query_terms qt
+                WHERE m.search_text ILIKE ('%' || qt.term || '%')
+                   OR m."metadata"::text ILIKE ('%' || qt.term || '%')
+            ) / NULLIF(ts.term_count, 0.0),
+            0.0
+        ) AS term_score,
+        CASE WHEN m."metadata"::text ILIKE :like_query THEN 1.0 ELSE 0.0 END AS metadata_score,
+        CASE
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '30 days' THEN 1.0
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '180 days' THEN 0.5
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '365 days' THEN 0.25
+            ELSE 0.0
+        END AS recency_score
     FROM memories m
-    JOIN candidate_ids c ON c.id = m.id
-    LEFT JOIN vector_candidates vc ON vc.id = m.id
-)
-SELECT
-    *,
-    (
-        0.65 * LEAST(GREATEST(semantic_score, 0.0), 1.0)
-        + 0.25 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
-        + 0.10 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
-    ) AS score
-FROM scored
-ORDER BY score DESC, updated_at DESC
-LIMIT :top_k
-"""
-
-
-def _text_search_sql(where_sql: str) -> str:
-    return f"""
-WITH text_candidates AS (
-    SELECT
-        m.id,
-        ts_rank_cd(to_tsvector('simple', m.search_text), plainto_tsquery('simple', :query)) AS keyword_score,
-        similarity(m.search_text, :query) AS fuzzy_score
-    FROM memories m
+    CROSS JOIN term_stats ts
     WHERE {where_sql}
       AND (
         to_tsvector('simple', m.search_text) @@ plainto_tsquery('simple', :query)
         OR m.search_text % :query
+        OR m.title % :query
         OR m.search_text ILIKE :like_query
+        OR m.title ILIKE :like_query
+        OR m."metadata"::text ILIKE :like_query
+        OR EXISTS (
+            SELECT 1
+            FROM query_terms qt
+            WHERE m.search_text ILIKE ('%' || qt.term || '%')
+               OR m."metadata"::text ILIKE ('%' || qt.term || '%')
+        )
       )
-    ORDER BY keyword_score DESC, fuzzy_score DESC, m.updated_at DESC
+    ORDER BY keyword_score DESC, title_score DESC, term_score DESC, fuzzy_score DESC, m.updated_at DESC
     LIMIT :candidate_limit
 ),
 scored AS (
@@ -287,18 +203,29 @@ scored AS (
         m."metadata" AS metadata,
         m.created_at,
         m.updated_at,
-        m.embedding_status,
+        'disabled' AS embedding_status,
         0.0 AS semantic_score,
         COALESCE(tc.keyword_score, 0.0) AS keyword_score,
-        COALESCE(tc.fuzzy_score, 0.0) AS fuzzy_score
+        COALESCE(tc.fuzzy_score, 0.0) AS fuzzy_score,
+        COALESCE(tc.exact_score, 0.0) AS exact_score,
+        COALESCE(tc.title_score, 0.0) AS title_score,
+        COALESCE(tc.term_score, 0.0) AS term_score,
+        COALESCE(tc.metadata_score, 0.0) AS metadata_score,
+        COALESCE(tc.recency_score, 0.0) AS recency_score
     FROM memories m
     JOIN text_candidates tc ON tc.id = m.id
 )
 SELECT
     *,
-    (
-        0.25 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
-        + 0.10 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
+    LEAST(
+        1.0,
+        0.30 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
+        + 0.20 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
+        + 0.20 * LEAST(GREATEST(term_score, 0.0), 1.0)
+        + 0.15 * LEAST(GREATEST(title_score, 0.0), 1.0)
+        + 0.10 * LEAST(GREATEST(exact_score, 0.0), 1.0)
+        + 0.03 * LEAST(GREATEST(metadata_score, 0.0), 1.0)
+        + 0.02 * LEAST(GREATEST(recency_score, 0.0), 1.0)
     ) AS score
 FROM scored
 ORDER BY score DESC, updated_at DESC
@@ -317,9 +244,9 @@ def _row_to_result(row: Any) -> SearchResult:
         updated_at=row["updated_at"],
         score=float(row["score"] or 0.0),
         score_parts={
-            "semantic": float(row["semantic_score"] or 0.0),
+            "semantic": 0.0,
             "keyword": float(row["keyword_score"] or 0.0),
             "fuzzy": float(row["fuzzy_score"] or 0.0),
         },
-        embedding_status=row["embedding_status"],
+        embedding_status="disabled",
     )

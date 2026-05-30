@@ -24,8 +24,29 @@ def build_search_text(title: str, content: str) -> str:
     return normalize_query(f"{title}\n{content}")
 
 
-def weighted_score(semantic: float, keyword: float, fuzzy: float) -> float:
+def weighted_score(
+    keyword: float,
+    fuzzy: float,
+    term: float = 0.0,
+    title: float = 0.0,
+    exact: float = 0.0,
+    metadata: float = 0.0,
+    recency: float = 0.0,
+) -> float:
     capped_keyword = min(max(keyword, 0.0), 1.0)
-    capped_semantic = min(max(semantic, 0.0), 1.0)
     capped_fuzzy = min(max(fuzzy, 0.0), 1.0)
-    return (0.65 * capped_semantic) + (0.25 * capped_keyword) + (0.10 * capped_fuzzy)
+    capped_term = min(max(term, 0.0), 1.0)
+    capped_title = min(max(title, 0.0), 1.0)
+    capped_exact = min(max(exact, 0.0), 1.0)
+    capped_metadata = min(max(metadata, 0.0), 1.0)
+    capped_recency = min(max(recency, 0.0), 1.0)
+    return min(
+        1.0,
+        (0.30 * capped_keyword)
+        + (0.20 * capped_fuzzy)
+        + (0.20 * capped_term)
+        + (0.15 * capped_title)
+        + (0.10 * capped_exact)
+        + (0.03 * capped_metadata)
+        + (0.02 * capped_recency),
+    )

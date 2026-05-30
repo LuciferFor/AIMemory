@@ -7,9 +7,7 @@ from aimemory.core.config import get_settings
 from aimemory.core.security import api_key_prefix, generate_api_key, hash_api_key
 from aimemory.db.session import SessionLocal
 from aimemory.models.api_key import ApiKey
-from aimemory.models.embedding_job import EmbeddingJob
 from aimemory.models.user import User
-from aimemory.worker.tasks import generate_memory_embedding
 
 app = typer.Typer(help="AIMemory administration commands.")
 
@@ -64,19 +62,8 @@ def revoke_api_key(prefix: str) -> None:
 
 @app.command("requeue-pending")
 def requeue_pending(limit: int = typer.Option(100, "--limit", min=1, max=1000)) -> None:
-    with SessionLocal() as db:
-        jobs = (
-            db.scalars(
-                select(EmbeddingJob)
-                .where(EmbeddingJob.status.in_(["pending", "retrying"]))
-                .order_by(EmbeddingJob.created_at)
-                .limit(limit)
-            )
-            .all()
-        )
-        for job in jobs:
-            generate_memory_embedding.delay(str(job.memory_id), str(job.id))
-        typer.echo(f"Requeued {len(jobs)} embedding jobs.")
+    _ = limit
+    typer.echo("Embedding workflow is disabled. Memories are searchable immediately with text indexes.")
 
 
 if __name__ == "__main__":

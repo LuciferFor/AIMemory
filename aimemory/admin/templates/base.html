@@ -18,7 +18,6 @@
         <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') else '' }}">用户</a>
         <a href="/admin/api-keys" class="{{ 'active' if request.url.path.startswith('/admin/api-keys') else '' }}">接口密钥</a>
         <a href="/admin/memories" class="{{ 'active' if request.url.path.startswith('/admin/memories') else '' }}">记忆</a>
-        <a href="/admin/jobs" class="{{ 'active' if request.url.path.startswith('/admin/jobs') else '' }}">任务</a>
         <a href="/admin/health" class="{{ 'active' if request.url.path.startswith('/admin/health') else '' }}">健康检查</a>
       </nav>
       <form method="post" action="/admin/logout" class="logout">

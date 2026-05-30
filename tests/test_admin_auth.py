@@ -96,3 +96,15 @@ def test_admin_dashboard_for_logged_in_user(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "仪表盘" in response.text
+    assert "待处理向量" not in response.text
+    assert "失败向量" not in response.text
+
+
+def test_admin_jobs_page_explains_disabled_embedding(monkeypatch) -> None:
+    client = _client(monkeypatch)
+    client.post("/admin/login", data={"username": "admin", "password": "secret", "next": "/admin"})
+
+    response = client.get("/admin/jobs")
+
+    assert response.status_code == 200
+    assert "不再创建向量任务" in response.text

@@ -99,4 +99,3 @@ def test_settings_include_logging_defaults() -> None:
     assert settings.log_level == "INFO"
     assert settings.log_format == "json"
     assert settings.slow_request_ms == 1000
-    assert settings.slow_embedding_ms == 3000

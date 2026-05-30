@@ -11,7 +11,6 @@ from aimemory.api.deps import get_current_user
 from aimemory.db.session import get_db
 from aimemory.models.user import User
 from aimemory.repositories.memories import (
-    create_embedding_job,
     search_memories,
     soft_delete_memory,
     upsert_memory,
@@ -30,9 +29,7 @@ from aimemory.schemas.memory import (
     MemoryWritePolicyResponse,
     ScoreParts,
 )
-from aimemory.services.embedding import EmbeddingProviderError, OpenAICompatibleEmbeddingClient
 from aimemory.services.text import normalize_query
-from aimemory.worker.tasks import generate_memory_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -105,33 +102,12 @@ def write_memory(
     retried_after_integrity_error = False
     try:
         memory, action = upsert_memory(db, current_user.id, payload)
-        job = create_embedding_job(db, memory.id)
         db.commit()
     except IntegrityError:
         retried_after_integrity_error = True
         db.rollback()
         memory, action = upsert_memory(db, current_user.id, payload)
-        job = create_embedding_job(db, memory.id)
         db.commit()
-
-    embedding_job_enqueued = True
-    try:
-        generate_memory_embedding.delay(str(memory.id), str(job.id))
-    except Exception as exc:  # Celery broker failures should not lose the memory.
-        embedding_job_enqueued = False
-        logger.warning(
-            "memory.embedding_enqueue_failed",
-            extra={
-                "event": "memory.embedding_enqueue_failed",
-                "user_id": current_user.id,
-                "agent_id": payload.agent_id,
-                "external_id": payload.external_id,
-                "memory_id": memory.id,
-                "embedding_job_id": job.id,
-                "error_type": exc.__class__.__name__,
-                "error": str(exc),
-            },
-        )
 
     logger.info(
         "memory.write",
@@ -142,8 +118,7 @@ def write_memory(
             "external_id": payload.external_id,
             "action": action,
             "memory_id": memory.id,
-            "embedding_job_id": job.id,
-            "embedding_job_enqueued": embedding_job_enqueued,
+            "indexing_mode": "text",
             "retried_after_integrity_error": retried_after_integrity_error,
             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
         },
@@ -283,24 +258,8 @@ def _search_results(
 ):
     start = time.perf_counter()
     normalized_query = normalize_query(payload.query)
-    query_vector = None
-
-    try:
-        query_vector = OpenAICompatibleEmbeddingClient().embed(normalized_query)
-    except EmbeddingProviderError as exc:
-        logger.info(
-            "memory.search_embedding_fallback",
-            extra={
-                "event": "memory.search_embedding_fallback",
-                "user_id": current_user.id,
-                "agent_id": payload.agent_id,
-                "error_type": exc.__class__.__name__,
-                "error": str(exc),
-            },
-        )
-
-    results = search_memories(db, current_user.id, payload, normalized_query, query_vector)
-    return results, query_vector is not None, round((time.perf_counter() - start) * 1000, 2)
+    results = search_memories(db, current_user.id, payload, normalized_query)
+    return results, False, round((time.perf_counter() - start) * 1000, 2)
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:

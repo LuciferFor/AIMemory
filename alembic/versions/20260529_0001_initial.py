@@ -5,8 +5,6 @@ Revises:
 Create Date: 2026-05-29 00:00:00.000000
 """
 
-import os
-
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
@@ -16,10 +14,6 @@ revision = "20260529_0001"
 down_revision = None
 branch_labels = None
 depends_on = None
-
-
-def _embedding_dim() -> int:
-    return int(os.getenv("EMBEDDING_DIM", "1024"))
 
 
 def upgrade() -> None:
@@ -64,7 +58,7 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("search_text", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(_embedding_dim()), nullable=True),
+        sa.Column("embedding", Vector(1024), nullable=True),
         sa.Column("embedding_status", sa.String(length=32), server_default="pending", nullable=False),
         sa.Column("embedding_error", sa.Text(), nullable=True),
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=True),

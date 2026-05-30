@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
     slow_request_ms: int = Field(default=1000, ge=1)
-    slow_embedding_ms: int = Field(default=3000, ge=1)
 
     database_url: str = "postgresql+psycopg://aimemory:aimemory@localhost:5432/aimemory"
     redis_url: str = "redis://localhost:6379/0"
@@ -31,15 +30,6 @@ class Settings(BaseSettings):
     admin_session_secret: str = "change-me-session-secret"
     admin_session_max_age_seconds: int = 43200
     admin_cookie_secure: bool = False
-
-    embedding_base_url: str = ""
-    embedding_api_key: str = ""
-    embedding_model: str = "text-embedding-3-large"
-    embedding_dim: int = 1024
-    embedding_include_dimensions: bool = True
-    embedding_timeout_seconds: float = 20.0
-
-    celery_task_always_eager: bool = False
 
     max_memory_title_chars: int = 512
     max_memory_content_chars: int = 20000

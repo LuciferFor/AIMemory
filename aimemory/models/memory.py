@@ -5,10 +5,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from aimemory.core.config import get_settings
 from aimemory.db.base import Base
-
-settings = get_settings()
 
 
 class Memory(Base):
@@ -33,8 +30,8 @@ class Memory(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     search_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    embedding = mapped_column(Vector(settings.embedding_dim), nullable=True)
-    embedding_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    embedding = mapped_column(Vector(1024), nullable=True)
+    embedding_status: Mapped[str] = mapped_column(String(32), nullable=False, default="disabled", server_default="disabled")
     embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
