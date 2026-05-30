@@ -63,6 +63,14 @@ button.primary,
   color: white;
 }
 
+button.secondary,
+.secondary {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
 .button-link:hover {
   border-color: var(--accent);
 }
@@ -349,6 +357,29 @@ h3 {
   gap: 10px;
 }
 
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.form-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.checkbox-line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.checkbox-line input {
+  width: auto;
+  min-height: auto;
+}
+
 .stopword-form {
   grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr) 150px;
 }
@@ -417,6 +448,16 @@ th {
   padding: 0;
 }
 
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
 .memory-table {
   min-width: 1080px;
   table-layout: fixed;
@@ -441,8 +482,12 @@ th {
   text-align: center;
 }
 
+.memory-table .col-select {
+  width: 60px;
+}
+
 .memory-table .col-memory {
-  width: 34%;
+  width: 30%;
 }
 
 .memory-table .col-category {
@@ -906,6 +951,47 @@ th {
   line-height: 1.5;
 }
 
+.ai-settings-form textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ai-suggestion-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-suggestion-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 12px;
+}
+
+.ai-suggestion-card header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ai-review-grid h3 {
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.ai-review-grid details {
+  margin-bottom: 8px;
+}
+
 .action-cell {
   min-width: 150px;
   vertical-align: middle;
@@ -1230,7 +1316,9 @@ pre {
   }
 
   .metric-grid,
-  .filter-grid {
+  .filter-grid,
+  .form-grid,
+  .ai-review-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1246,6 +1334,8 @@ pre {
 
   .metric-grid,
   .filter-grid,
+  .form-grid,
+  .ai-review-grid,
   .nav {
     grid-template-columns: 1fr;
   }

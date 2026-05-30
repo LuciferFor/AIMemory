@@ -5,6 +5,12 @@
 {% block content %}
 <div class="section-head">
   <a class="button-link" href="/admin/memories">返回列表</a>
+  {% if not memory.deleted_at %}
+  <form method="post" action="/admin/memories/{{ memory.id }}/ai-review" data-confirm="确认把这条完整记忆发送给已配置的 AI 模型整理？">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="secondary">AI 整理此记忆</button>
+  </form>
+  {% endif %}
   {% if memory.deleted_at %}
   <span class="badge failed">已删除</span>
   {% else %}

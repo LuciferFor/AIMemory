@@ -53,8 +53,14 @@
 </section>
 
 <section class="panel memory-table-panel">
+  <form id="ai-review-selected" method="post" action="/admin/memories/ai-review" class="table-toolbar" data-confirm="确认把选中的完整记忆发送给已配置的 AI 模型整理？">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="secondary">AI 整理选中记忆</button>
+    <span class="muted">一次最多 50 条，生成建议后需要手动确认。</span>
+  </form>
   <table class="memory-table memory-table-compact">
     <colgroup>
+      <col class="col-select">
       <col class="col-memory">
       <col class="col-category">
       <col class="col-owner">
@@ -65,6 +71,7 @@
     </colgroup>
     <thead>
       <tr>
+        <th>选择</th>
         <th>记忆</th>
         <th>分类</th>
         <th>归属</th>
@@ -78,6 +85,11 @@
       {% for row in rows %}
       {% set memory = row.memory %}
       <tr class="memory-row {{ 'is-deleted' if memory.deleted_at else '' }}">
+        <td class="select-cell">
+          {% if not memory.deleted_at %}
+          <input type="checkbox" name="memory_ids" value="{{ memory.id }}" form="ai-review-selected">
+          {% endif %}
+        </td>
         <td class="memory-title-cell">
           <strong title="{{ memory.title }}">{{ memory.title }}</strong>
         </td>
@@ -129,7 +141,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">暂无记忆</td></tr>
+      <tr><td colspan="8" class="empty">暂无记忆</td></tr>
       {% endfor %}
     </tbody>
   </table>

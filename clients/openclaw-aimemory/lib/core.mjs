@@ -265,6 +265,9 @@ function addUserMessageCandidate(parts, seen, value, { allowRoleless = false } =
   if (value == null) {
     return;
   }
+  if (typeof value === "string" && !allowRoleless) {
+    return;
+  }
   if (typeof value === "object" && !Array.isArray(value)) {
     const role = messageRole(value);
     if (role && !isUserRole(role)) {
@@ -296,14 +299,14 @@ export function extractCurrentUserInputText(event = {}) {
   }
 
   for (const value of [
-    event.input,
-    event.currentInput,
-    event.current_input,
     event.inbound,
     event.currentMessage,
     event.current_message,
+    event.input,
+    event.currentInput,
+    event.current_input,
   ]) {
-    addUserMessageCandidate(parts, seen, value, { allowRoleless: true });
+    addUserMessageCandidate(parts, seen, value);
   }
 
   for (const value of [event.message]) {

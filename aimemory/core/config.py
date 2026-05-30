@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     admin_session_secret: str = "change-me-session-secret"
     admin_session_max_age_seconds: int = 43200
     admin_cookie_secure: bool = False
+    ai_config_encryption_secret: str = ""
 
     max_memory_title_chars: int = 512
     max_memory_content_chars: int = 20000

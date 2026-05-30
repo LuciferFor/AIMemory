@@ -1,5 +1,7 @@
 from aimemory.models.api_key import ApiKey
+from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSuggestion
 from aimemory.models.embedding_job import EmbeddingJob
+from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.memory_category import MemoryCategory
@@ -9,7 +11,10 @@ from aimemory.models.user import User
 
 __all__ = [
     "ApiKey",
+    "AiMemoryReviewRun",
+    "AiMemoryReviewSuggestion",
     "EmbeddingJob",
+    "LlmProviderConfig",
     "Memory",
     "MemoryAttachment",
     "MemoryCategory",

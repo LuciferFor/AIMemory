@@ -1,3 +1,4 @@
+import json
 import uuid
 from types import SimpleNamespace
 
@@ -7,9 +8,12 @@ from aimemory.admin.auth import COOKIE_NAME, get_serializer
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
+from aimemory.models.ai_memory_review import AiMemoryReviewSuggestion
+from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory_category import MemoryCategory
 from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
+from aimemory.services.ai_crypto import decrypt_secret, encrypt_secret
 
 
 class _Rows:
@@ -217,6 +221,66 @@ class _RequestLogDb(_FakeDb):
 
     def scalars(self, query) -> _Rows:
         return _Rows(self.users)
+
+
+class _AiConfigDb(_FakeDb):
+    def __init__(self) -> None:
+        self.config = None
+        self.added = []
+        self.committed = False
+
+    def scalar(self, query):
+        return self.config
+
+    def add(self, value) -> None:
+        self.added.append(value)
+        if isinstance(value, LlmProviderConfig):
+            if value.id is None:
+                value.id = uuid.uuid4()
+            self.config = value
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+class _AiReviewDb(_MemoryDb):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = LlmProviderConfig(
+            id=uuid.uuid4(),
+            name="default",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-flash",
+            encrypted_api_key=encrypt_secret("sk-test", "test-ai-secret"),
+            api_key_hint="sk...test",
+            timeout_ms=30000,
+            max_output_tokens=4096,
+            temperature=0.0,
+            extra_body_json={},
+            enabled=True,
+        )
+        self.runs = {}
+        self.suggestions = {}
+
+    def scalar(self, query):
+        return self.config
+
+    def scalars(self, query) -> _Rows:
+        return _Rows(self.categories)
+
+    def add(self, value) -> None:
+        if getattr(value, "id", None) is None:
+            value.id = uuid.uuid4()
+        if hasattr(value, "run_id") and isinstance(value, AiMemoryReviewSuggestion):
+            self.suggestions[value.id] = value
+        elif hasattr(value, "suggestions"):
+            self.runs[value.id] = value
+        self.added.append(value)
+
+    def flush(self) -> None:
+        for value in self.added:
+            if getattr(value, "id", None) is None:
+                value.id = uuid.uuid4()
 
 
 class _StopwordDb(_FakeDb):
@@ -441,6 +505,103 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "pref-short-replies" in response.text
     assert "用户喜欢短一点、自然一点的回答。" in response.text
     assert "Authorization" not in response.text
+
+
+def test_admin_ai_settings_requires_login(monkeypatch) -> None:
+    client = _client(monkeypatch)
+
+    response = client.get("/admin/ai-settings", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/login")
+
+
+def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiConfigDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/ai-settings",
+        data={
+            "csrf_token": csrf,
+            "base_url": "https://api.deepseek.com/",
+            "model": "deepseek-v4-flash",
+            "api_key": "sk-secret-value",
+            "timeout_ms": "45000",
+            "max_output_tokens": "2048",
+            "temperature": "0",
+            "extra_body_json": '{"thinking":{"type":"disabled"}}',
+            "enabled": "on",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/ai-settings")
+    assert db.config is not None
+    assert db.config.base_url == "https://api.deepseek.com"
+    assert db.config.model == "deepseek-v4-flash"
+    assert db.config.encrypted_api_key != "sk-secret-value"
+    assert decrypt_secret(db.config.encrypted_api_key, "test-ai-secret") == "sk-secret-value"
+    assert db.config.api_key_hint.startswith("sk")
+    assert db.config.timeout_ms == 45000
+    assert db.config.max_output_tokens == 2048
+    assert db.config.extra_body_json == {"thinking": {"type": "disabled"}}
+    assert db.config.enabled is True
+    assert db.committed is True
+
+
+def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiReviewDb()
+    captured = {}
+
+    def fake_chat_completion(config, api_key, messages):
+        captured["api_key"] = api_key
+        captured["messages"] = messages
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "suggestions": [
+                        {
+                            "type": "rewrite",
+                            "memory_ids": [str(db.memories[0].id)],
+                            "target_memory_id": str(db.memories[0].id),
+                            "proposed": {"title": "压缩标题", "content": "压缩正文", "category": "偏好"},
+                            "reason": "去掉重复表达。",
+                            "confidence": 0.9,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
+    monkeypatch.setattr("aimemory.services.ai_memory_review.chat_completion", fake_chat_completion)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/memories/ai-review",
+        data={"csrf_token": csrf, "memory_ids": str(db.memories[0].id)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/ai-reviews/")
+    assert captured["api_key"] == "sk-test"
+    assert "只输出 JSON" in captured["messages"][0]["content"]
+    assert len(db.suggestions) == 1
+    suggestion = next(iter(db.suggestions.values()))
+    assert suggestion.suggestion_type == "rewrite"
+    assert suggestion.proposed_json["title"] == "压缩标题"
+    assert suggestion.proposed_json["content"] == "压缩正文"
+    assert suggestion.proposed_json["category"] == "偏好"
+    assert suggestion.reason == "去掉重复表达。"
+    assert db.committed is True
 
 
 def test_admin_search_stopwords_page_lists_terms(monkeypatch) -> None:

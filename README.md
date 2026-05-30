@@ -134,10 +134,17 @@ Set these values before exposing it:
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=<strong-password>
 ADMIN_SESSION_SECRET=<random-secret>
+AI_CONFIG_ENCRYPTION_SECRET=<random-secret-for-ai-config>
 ADMIN_COOKIE_SECURE=false
 ```
 
 Use `ADMIN_COOKIE_SECURE=true` after putting the service behind HTTPS.
+
+The admin UI also includes optional AI memory review. Configure it from
+`/admin/ai-settings` with any OpenAI-compatible `/chat/completions` provider.
+The default values target DeepSeek: `https://api.deepseek.com` and
+`deepseek-v4-flash`. Review actions send the selected full memory content to
+that provider and only write changes after an admin applies each suggestion.
 
 ## Configuration
 
@@ -148,6 +155,7 @@ Important environment variables:
 - `DATABASE_URL`: SQLAlchemy PostgreSQL URL.
 - `REDIS_URL`: Redis URL for health checks and future async work.
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`: admin web login.
+- `AI_CONFIG_ENCRYPTION_SECRET`: encrypts the AI provider API key stored from the admin UI.
 - `LOG_LEVEL`: logging level, default `INFO`.
 - `LOG_FORMAT`: `json` for Docker/production logs, or `text` for local debugging.
 - `SLOW_REQUEST_MS`: request duration threshold logged as warning.

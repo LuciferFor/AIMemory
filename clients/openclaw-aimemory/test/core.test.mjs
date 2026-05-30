@@ -99,10 +99,34 @@ test("clean query skips prompt-only and assistant-only turns", () => {
   assert.equal(buildCleanMemoryQueryFromTurn(event, {}, 1500, { includePrompt: true }), "");
   assert.equal(
     buildCleanMemoryQueryFromTurn({
+      input: "dark armor fantasy poster",
+      currentMessage: "这是一段无角色模型回复",
+    }),
+    "",
+  );
+  assert.equal(
+    buildCleanMemoryQueryFromTurn({
       message: { role: "assistant", content: "这是一段模型回复" },
       messages: [{ role: "user", content: "历史用户消息" }],
     }),
     "",
+  );
+});
+
+test("clean query accepts only explicit current user fields or role user objects", () => {
+  assert.equal(
+    buildCleanMemoryQueryFromTurn({
+      input: { role: "user", content: "老婆来点福利美照" },
+      currentMessage: { role: "assistant", content: "assistant reply" },
+    }),
+    "老婆来点福利美照",
+  );
+  assert.equal(
+    buildCleanMemoryQueryFromTurn({
+      userInput: "中文用户输入",
+      input: "internal generated prompt",
+    }),
+    "中文用户输入",
   );
 });
 
@@ -314,6 +338,59 @@ test("runtime context success injects prependContext", async () => {
   assert.equal(result.prependContext, "记忆上下文");
   assert.doesNotMatch(JSON.stringify(llmMessages), /IDENTITY\.md/);
   assert.equal(contextBodies[0].query, "hello");
+});
+
+test("runtime uses one-shot message_received user input instead of internal roleless input", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return '{"category":"未分类"}';
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.message_received(
+    { text: "老婆来点福利美照", chatType: "direct", chatId: "chat-1" },
+    { chatId: "chat-1" },
+  );
+  await handlers.before_prompt_build(
+    { input: "dark armor fantasy poster", chatType: "direct", chatId: "chat-1" },
+    { chatId: "chat-1" },
+  );
+  await handlers.before_prompt_build(
+    { input: "another internal prompt", chatType: "direct", chatId: "chat-1" },
+    { chatId: "chat-1" },
+  );
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].query, "老婆来点福利美照");
 });
 
 test("runtime compaction skips unstructured prompt and transcript", async () => {

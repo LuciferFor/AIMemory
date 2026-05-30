@@ -1,8 +1,9 @@
+import json
 import uuid
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -26,7 +27,9 @@ from aimemory.admin.auth import (
 from aimemory.core.config import get_settings
 from aimemory.core.security import api_key_prefix, generate_api_key, hash_api_key
 from aimemory.db.session import get_db
+from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSuggestion
 from aimemory.models.api_key import ApiKey
+from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.memory_category import MemoryCategory
@@ -45,12 +48,23 @@ from aimemory.repositories.search_stopwords import (
     normalize_stopword,
 )
 from aimemory.services.attachments import attachment_search_text
+from aimemory.services.ai_crypto import AiConfigEncryptionError, decrypt_secret, encrypt_secret, mask_secret
+from aimemory.services.ai_memory_review import (
+    AiMemoryReviewError,
+    apply_suggestion,
+    create_default_llm_config,
+    create_review_run,
+    default_config_values,
+    get_llm_config,
+    ignore_suggestion,
+)
+from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion
 from aimemory.services.text import build_search_text, is_numeric_term
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-2205"
+ADMIN_ASSET_VERSION = "20260531-0100"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -67,6 +81,19 @@ DELETED_MODE_LABELS = {
 }
 templates.env.globals["status_label"] = lambda value: STATUS_LABELS.get(value, value)
 templates.env.globals["deleted_mode_label"] = lambda value: DELETED_MODE_LABELS.get(value, value)
+SUGGESTION_TYPE_LABELS = {
+    "rewrite": "改写压缩",
+    "merge": "合并重复",
+    "move_category": "调整分类",
+    "soft_delete": "建议删除",
+}
+SUGGESTION_STATUS_LABELS = {
+    "pending": "待处理",
+    "applied": "已应用",
+    "ignored": "已忽略",
+}
+templates.env.globals["suggestion_type_label"] = lambda value: SUGGESTION_TYPE_LABELS.get(value, value)
+templates.env.globals["suggestion_status_label"] = lambda value: SUGGESTION_STATUS_LABELS.get(value, value)
 
 
 def request_log_business(log: RequestLog) -> dict[str, str]:
@@ -186,6 +213,70 @@ def base_context(request: Request, session: dict[str, Any], **extra: Any) -> dic
         "error": request.query_params.get("error"),
         **extra,
     }
+
+
+def parse_json_object(value: str, field_name: str) -> dict[str, Any]:
+    text_value = str(value or "").strip()
+    if not text_value:
+        return {}
+    try:
+        parsed = json.loads(text_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field_name} 必须是合法 JSON。") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{field_name} 必须是 JSON 对象。")
+    return parsed
+
+
+def ai_config_view(config: LlmProviderConfig | None) -> dict[str, Any]:
+    defaults = default_config_values()
+    return {
+        "base_url": config.base_url if config else defaults["base_url"],
+        "model": config.model if config else defaults["model"],
+        "api_key_hint": config.api_key_hint if config else "",
+        "has_api_key": bool(config and config.encrypted_api_key),
+        "timeout_ms": config.timeout_ms if config else defaults["timeout_ms"],
+        "max_output_tokens": config.max_output_tokens if config else defaults["max_output_tokens"],
+        "temperature": config.temperature if config else defaults["temperature"],
+        "extra_body_json": json.dumps(config.extra_body_json if config else defaults["extra_body_json"], ensure_ascii=False, indent=2),
+        "enabled": config.enabled if config else defaults["enabled"],
+    }
+
+
+def load_memory_rows(db: Session, memory_ids: list[uuid.UUID]) -> list[tuple[Memory, str, str]]:
+    if not memory_ids:
+        return []
+    rows = db.execute(
+        select(Memory, User.name.label("user_name"), MemoryCategory.name.label("category_name"))
+        .select_from(Memory)
+        .join(User, User.id == Memory.user_id)
+        .join(MemoryCategory, MemoryCategory.id == Memory.category_id)
+        .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
+        .where(Memory.id.in_(memory_ids))
+        .where(Memory.deleted_at.is_(None))
+    ).all()
+    row_by_id = {memory.id: (memory, user_name, category_name) for memory, user_name, category_name in rows}
+    return [row_by_id[memory_id] for memory_id in memory_ids if memory_id in row_by_id]
+
+
+def parse_uuid_list(values: list[str]) -> list[uuid.UUID]:
+    ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for value in values:
+        try:
+            memory_id = uuid.UUID(str(value))
+        except ValueError:
+            continue
+        if memory_id not in seen:
+            ids.append(memory_id)
+            seen.add(memory_id)
+    return ids
+
+
+def decrypt_ai_api_key(config: LlmProviderConfig, secret: str) -> str:
+    if not config.encrypted_api_key:
+        raise AiConfigEncryptionError("AI API Key 未配置。")
+    return decrypt_secret(config.encrypted_api_key, secret)
 
 
 def parse_date(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -524,6 +615,93 @@ async def revoke_api_key(api_key_id: uuid.UUID, request: Request, db: Session = 
     return redirect_to("/admin/api-keys", notice="接口密钥已吊销。")
 
 
+@router.get("/ai-settings")
+def ai_settings_page(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    return templates.TemplateResponse(
+        request,
+        "ai_settings.html",
+        base_context(
+            request,
+            session,
+            config=ai_config_view(get_llm_config(db)),
+            encryption_ready=bool(get_settings().ai_config_encryption_secret.strip()),
+        ),
+    )
+
+
+@router.post("/ai-settings")
+async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    try:
+        extra_body_json = parse_json_object(form.get("extra_body_json", "{}"), "扩展请求体")
+        timeout_ms = max(500, min(600000, int(form.get("timeout_ms", "30000"))))
+        max_output_tokens = max(1, min(200000, int(form.get("max_output_tokens", "4096"))))
+        temperature = max(0.0, min(2.0, float(form.get("temperature", "0"))))
+    except ValueError as exc:
+        return redirect_to("/admin/ai-settings", error=str(exc))
+
+    base_url = form.get("base_url", "").strip().rstrip("/")
+    model = form.get("model", "").strip()
+    if not base_url:
+        return redirect_to("/admin/ai-settings", error="Base URL 不能为空。")
+    if not model:
+        return redirect_to("/admin/ai-settings", error="模型不能为空。")
+
+    config = get_llm_config(db) or create_default_llm_config()
+    config.base_url = base_url
+    config.model = model
+    config.timeout_ms = timeout_ms
+    config.max_output_tokens = max_output_tokens
+    config.temperature = temperature
+    config.extra_body_json = extra_body_json
+    config.enabled = form.get("enabled") == "on"
+    api_key = form.get("api_key", "").strip()
+    if api_key:
+        secret = get_settings().ai_config_encryption_secret
+        if not secret.strip():
+            return redirect_to("/admin/ai-settings", error="AI_CONFIG_ENCRYPTION_SECRET 未配置，无法保存 API Key。")
+        try:
+            config.encrypted_api_key = encrypt_secret(api_key, secret)
+        except AiConfigEncryptionError as exc:
+            return redirect_to("/admin/ai-settings", error=str(exc))
+        config.api_key_hint = mask_secret(api_key)
+    db.add(config)
+    db.commit()
+    return redirect_to("/admin/ai-settings", notice="AI 配置已保存。")
+
+
+@router.post("/ai-settings/test")
+async def test_ai_settings(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    config = get_llm_config(db)
+    if config is None:
+        return redirect_to("/admin/ai-settings", error="请先保存 AI 配置。")
+    try:
+        api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
+        chat_completion(
+            config,
+            api_key,
+            [
+                {"role": "system", "content": "你是连接测试助手，只输出 json。"},
+                {"role": "user", "content": "输出 {\"ok\": true} 这个 json。"},
+            ],
+        )
+    except (AiConfigEncryptionError, OpenAICompatibleError) as exc:
+        return redirect_to("/admin/ai-settings", error=str(exc))
+    return redirect_to("/admin/ai-settings", notice="AI 连接测试成功。")
+
+
 @router.get("/categories")
 def categories_page(
     request: Request,
@@ -853,6 +1031,121 @@ def request_logs_page(
     )
 
 
+@router.post("/memories/ai-review")
+async def create_ai_review_from_selection(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    parsed = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    verify_csrf(session, {"csrf_token": (parsed.get("csrf_token") or [""])[0]})
+    memory_ids = parse_uuid_list([str(value) for value in parsed.get("memory_ids", [])])
+    if not memory_ids:
+        return redirect_to("/admin/memories", error="请选择要整理的记忆。")
+    return run_ai_review(request, session, db, memory_ids, source="selection", error_path="/admin/memories")
+
+
+@router.post("/memories/{memory_id}/ai-review")
+async def create_ai_review_from_detail(memory_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    return run_ai_review(request, session, db, [memory_id], source="detail", error_path=f"/admin/memories/{memory_id}")
+
+
+def run_ai_review(
+    request: Request,
+    session: dict[str, Any],
+    db: Session,
+    memory_ids: list[uuid.UUID],
+    *,
+    source: str,
+    error_path: str,
+) -> Response:
+    config = get_llm_config(db)
+    if config is None:
+        return redirect_to(error_path, error="请先在 AI 设置里配置模型。")
+    if not config.enabled:
+        return redirect_to(error_path, error="AI 配置已停用。")
+    try:
+        api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
+    except AiConfigEncryptionError as exc:
+        return redirect_to(error_path, error=str(exc))
+
+    rows = load_memory_rows(db, memory_ids)
+    if not rows:
+        return redirect_to(error_path, error="未找到可整理的未删除记忆。")
+    try:
+        run = create_review_run(
+            db,
+            config=config,
+            api_key=api_key,
+            admin_username=session["sub"],
+            memory_rows=rows,
+            source=source,
+        )
+    except AiMemoryReviewError as exc:
+        return redirect_to(error_path, error=str(exc))
+    if run.status == "failed":
+        return redirect_to(f"/admin/ai-reviews/{run.id}", error="AI 整理失败，请查看错误。")
+    return redirect_to(f"/admin/ai-reviews/{run.id}", notice="AI 整理完成，请审核建议。")
+
+
+@router.get("/ai-reviews/{run_id}")
+def ai_review_run_page(run_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    run = db.scalar(
+        select(AiMemoryReviewRun)
+        .options(selectinload(AiMemoryReviewRun.suggestions))
+        .where(AiMemoryReviewRun.id == run_id)
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 整理任务不存在。")
+    run.suggestions.sort(key=lambda item: str(item.created_at))
+    return templates.TemplateResponse(
+        request,
+        "ai_review_run.html",
+        base_context(request, session, run=run),
+    )
+
+
+@router.post("/ai-suggestions/{suggestion_id}/apply")
+async def apply_ai_suggestion(suggestion_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    suggestion = db.get(AiMemoryReviewSuggestion, suggestion_id)
+    if suggestion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 建议不存在。")
+    try:
+        apply_suggestion(db, suggestion)
+    except AiMemoryReviewError as exc:
+        return redirect_to(f"/admin/ai-reviews/{suggestion.run_id}", error=str(exc))
+    return redirect_to(f"/admin/ai-reviews/{suggestion.run_id}", notice="AI 建议已应用。")
+
+
+@router.post("/ai-suggestions/{suggestion_id}/ignore")
+async def ignore_ai_suggestion(suggestion_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    suggestion = db.get(AiMemoryReviewSuggestion, suggestion_id)
+    if suggestion is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 建议不存在。")
+    try:
+        ignore_suggestion(db, suggestion)
+    except AiMemoryReviewError as exc:
+        return redirect_to(f"/admin/ai-reviews/{suggestion.run_id}", error=str(exc))
+    return redirect_to(f"/admin/ai-reviews/{suggestion.run_id}", notice="AI 建议已忽略。")
+
+
 @router.get("/memories/{memory_id}")
 def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
     session = require_admin_context(request)
@@ -987,6 +1280,13 @@ def health_page(request: Request, db: Session = Depends(get_db)) -> Response:
             "name": "后台会话密钥",
             "status": "ok" if not settings.admin_session_secret.startswith("change-me") else "warning",
             "detail": "已配置" if not settings.admin_session_secret.startswith("change-me") else "正在使用默认值",
+        }
+    )
+    checks.append(
+        {
+            "name": "AI 配置加密密钥",
+            "status": "ok" if settings.ai_config_encryption_secret.strip() else "warning",
+            "detail": "已配置" if settings.ai_config_encryption_secret.strip() else "未配置，后台不能保存 AI API Key",
         }
     )
     return templates.TemplateResponse(request, "health.html", base_context(request, session, checks=checks))

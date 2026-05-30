@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% set title = "AI 整理结果 - AIMemory 管理后台" %}
+{% set heading = "AI 整理结果" %}
+{% set subheading = "审核并应用建议" %}
+{% block content %}
+<div class="section-head">
+  <a class="button-link" href="/admin/memories">返回记忆</a>
+  <a class="button-link" href="/admin/ai-settings">AI 设置</a>
+  <span class="badge {{ 'ready' if run.status == 'completed' else 'failed' if run.status == 'failed' else 'pending' }}">{{ run.status }}</span>
+</div>
+
+<section class="panel">
+  <div class="summary-head">
+    <span>来源 {{ run.source }}</span>
+    <span>记忆 {{ run.request_summary.get("memory_count", 0) }} 条</span>
+    <span>建议 {{ run.response_summary.get("suggestion_count", run.suggestions|length) }} 条</span>
+    {% if run.total_tokens %}<span>Token {{ run.total_tokens }}</span>{% endif %}
+    <span title="{{ full_datetime(run.created_at) }}">{{ compact_datetime(run.created_at) }}</span>
+  </div>
+  {% if run.error %}
+  <div class="notice error">{{ run.error }}</div>
+  {% endif %}
+  {% if run.prompt_preview %}
+  <details>
+    <summary>任务摘要</summary>
+    <pre>{{ run.prompt_preview }}</pre>
+  </details>
+  {% endif %}
+</section>
+
+<section class="panel ai-suggestion-list">
+  {% for suggestion in run.suggestions %}
+  <article class="ai-suggestion-card">
+    <header>
+      <span class="badge">{{ suggestion_type_label(suggestion.suggestion_type) }}</span>
+      <span class="badge {{ 'ready' if suggestion.status == 'applied' else 'pending' if suggestion.status == 'pending' else '' }}">{{ suggestion_status_label(suggestion.status) }}</span>
+      {% if suggestion.confidence is not none %}<span class="muted">置信度 {{ "%.2f"|format(suggestion.confidence) }}</span>{% endif %}
+    </header>
+    {% if suggestion.reason %}<p>{{ suggestion.reason }}</p>{% endif %}
+    <div class="ai-review-grid">
+      <section>
+        <h3>原记忆</h3>
+        {% for item in suggestion.original_json.get("memories", []) %}
+        <details open>
+          <summary>{{ item.get("title") }} / {{ item.get("category") }}</summary>
+          <code>{{ item.get("memory_id") }}</code>
+          <pre>{{ item.get("content") }}</pre>
+        </details>
+        {% endfor %}
+      </section>
+      <section>
+        <h3>建议结果</h3>
+        {% set proposed = suggestion.proposed_json or {} %}
+        {% if proposed.get("category") %}<p><strong>分类</strong> {{ proposed.get("category") }}</p>{% endif %}
+        {% if proposed.get("title") %}<p><strong>标题</strong> {{ proposed.get("title") }}</p>{% endif %}
+        {% if proposed.get("content") %}<pre>{{ proposed.get("content") }}</pre>{% endif %}
+        {% if not proposed %}
+        <p class="muted">无改写内容，仅执行 {{ suggestion_type_label(suggestion.suggestion_type) }}。</p>
+        {% endif %}
+      </section>
+    </div>
+    {% if suggestion.status == "pending" %}
+    <footer class="action-buttons">
+      <form method="post" action="/admin/ai-suggestions/{{ suggestion.id }}/apply" data-confirm="确认应用这个 AI 建议？">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="action-button detail">应用</button>
+      </form>
+      <form method="post" action="/admin/ai-suggestions/{{ suggestion.id }}/ignore">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="action-button">忽略</button>
+      </form>
+    </footer>
+    {% endif %}
+  </article>
+  {% else %}
+  <p class="empty">没有生成建议。</p>
+  {% endfor %}
+</section>
+{% endblock %}

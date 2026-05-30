@@ -57,6 +57,50 @@ function registerHook(api, name, handler, options) {
   throw new Error("OpenClaw hook registration API is unavailable");
 }
 
+const RECENT_USER_INPUT_TTL_MS = 120000;
+
+function memoryTurnKey(event = {}, ctx = {}) {
+  return String(
+    ctx.turnId ||
+      ctx.messageId ||
+      ctx.chatId ||
+      ctx.threadId ||
+      ctx.conversationId ||
+      event.turnId ||
+      event.messageId ||
+      event.chatId ||
+      event.threadId ||
+      event.conversationId ||
+      event.message?.id ||
+      event.message?.messageId ||
+      event.inbound?.id ||
+      event.inbound?.messageId ||
+      "default",
+  );
+}
+
+function rememberRecentUserInput(cache, event = {}, ctx = {}, text = "") {
+  const value = String(text || "").trim();
+  if (!value) {
+    return;
+  }
+  cache.set(memoryTurnKey(event, ctx), { text: value, at: Date.now() });
+}
+
+function consumeRecentUserInput(cache, event = {}, ctx = {}, maxChars = 1500) {
+  const key = memoryTurnKey(event, ctx);
+  const item = cache.get(key) || cache.get("default");
+  if (!item) {
+    return "";
+  }
+  cache.delete(key);
+  cache.delete("default");
+  if (Date.now() - item.at > RECENT_USER_INPUT_TTL_MS) {
+    return "";
+  }
+  return item.text.slice(-maxChars).trim();
+}
+
 async function extractAndWriteMemories(api, event, ctx, config, sourceText, reason, logger) {
   if (!sourceText.trim()) {
     return { extracted: 0, written: 0 };
@@ -110,6 +154,8 @@ async function selectMemoryCategory(api, config, query, options, logger) {
 }
 
 export function registerAIMemoryRuntime(api, options = {}) {
+  const recentUserInputs = new Map();
+
   registerHook(
     api,
     "before_prompt_build",
@@ -119,7 +165,9 @@ export function registerAIMemoryRuntime(api, options = {}) {
       if (!isAllowedTurn(event, ctx, config)) {
         return {};
       }
-      const query = buildCleanMemoryQueryFromTurn(event, ctx, 1500);
+      const query =
+        buildCleanMemoryQueryFromTurn(event, ctx, 1500) ||
+        consumeRecentUserInput(recentUserInputs, event, ctx, 1500);
       if (!query) {
         return {};
       }
@@ -159,10 +207,14 @@ export function registerAIMemoryRuntime(api, options = {}) {
     async (event = {}, ctx = {}) => {
       const config = resolveHookConfig(event, options);
       const logger = getLogger(api, config);
-      if (!config.saveOnExplicitRemember || !isAllowedTurn(event, ctx, config)) {
+      if (!isAllowedTurn(event, ctx, config)) {
         return;
       }
       const text = extractInboundText(event);
+      rememberRecentUserInput(recentUserInputs, event, ctx, text);
+      if (!config.saveOnExplicitRemember) {
+        return;
+      }
       if (!hasExplicitRememberIntent(text)) {
         return;
       }
