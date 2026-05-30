@@ -1,4 +1,5 @@
 from aimemory.models.api_key import ApiKey
+from aimemory.models.ai_chat import AiChatMessage, AiChatThread
 from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSuggestion
 from aimemory.models.embedding_job import EmbeddingJob
 from aimemory.models.llm_provider_config import LlmProviderConfig
@@ -11,6 +12,8 @@ from aimemory.models.user import User
 
 __all__ = [
     "ApiKey",
+    "AiChatMessage",
+    "AiChatThread",
     "AiMemoryReviewRun",
     "AiMemoryReviewSuggestion",
     "EmbeddingJob",

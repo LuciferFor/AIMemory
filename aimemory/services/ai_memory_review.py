@@ -37,6 +37,9 @@ def default_config_values() -> dict[str, Any]:
         "temperature": 0.0,
         "extra_body_json": DEFAULT_EXTRA_BODY,
         "enabled": True,
+        "query_analysis_enabled": True,
+        "query_analysis_max_output_tokens": 256,
+        "query_analysis_timeout_ms": 3000,
     }
 
 
@@ -142,7 +145,12 @@ def create_review_run(
     db.flush()
 
     try:
-        result = chat_completion(config, api_key, build_review_messages(memory_payload, categories))
+        result = chat_completion(
+            config,
+            api_key,
+            build_review_messages(memory_payload, categories),
+            response_format={"type": "json_object"},
+        )
         suggestions = normalize_suggestions(result.content, {item["memory_id"] for item in memory_payload})
         for suggestion in suggestions:
             db.add(

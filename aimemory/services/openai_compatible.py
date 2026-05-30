@@ -26,6 +26,11 @@ def chat_completion(
     config: LlmProviderConfig,
     api_key: str,
     messages: list[dict[str, str]],
+    *,
+    response_format: dict[str, Any] | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    timeout_ms: int | None = None,
 ) -> ChatCompletionResult:
     key = str(api_key or "").strip()
     if not key:
@@ -38,16 +43,19 @@ def chat_completion(
     payload: dict[str, Any] = {}
     if isinstance(config.extra_body_json, dict):
         payload.update(config.extra_body_json)
+    selected_temperature = config.temperature if temperature is None else temperature
+    selected_max_tokens = config.max_output_tokens if max_tokens is None else max_tokens
     payload.update(
         {
             "model": config.model,
             "messages": messages,
-            "temperature": float(config.temperature or 0.0),
-            "max_tokens": int(config.max_output_tokens or 4096),
+            "temperature": float(selected_temperature or 0.0),
+            "max_tokens": int(selected_max_tokens or 4096),
             "stream": False,
-            "response_format": {"type": "json_object"},
         }
     )
+    if response_format is not None:
+        payload["response_format"] = response_format
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         f"{base_url}/chat/completions",
@@ -61,7 +69,9 @@ def chat_completion(
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=max(int(config.timeout_ms or 30000) / 1000, 0.5)) as response:
+        selected_timeout_ms = config.timeout_ms if timeout_ms is None else timeout_ms
+        request_timeout_ms = int(selected_timeout_ms or 30000)
+        with urllib.request.urlopen(request, timeout=max(request_timeout_ms / 1000, 0.5)) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

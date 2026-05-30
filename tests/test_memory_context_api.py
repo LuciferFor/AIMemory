@@ -168,6 +168,7 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     assert summary["top_k"] == 8
     assert summary["max_chars"] == 3000
     assert summary["ignored_terms"] == []
+    assert summary["keyword_source"] == "disabled"
     assert "回答" in summary["query_terms"]
     assert "偏好" in summary["query_terms"]
     assert summary["result_count"] == 1
@@ -187,6 +188,63 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     rendered = str(summary)
     assert response.json()["context_text"] not in rendered
     assert long_content not in rendered
+
+
+def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    records = []
+    now = datetime.now(UTC)
+    result = SearchResult(
+        memory_id=uuid4(),
+        external_id="pref-short-replies",
+        category="偏好",
+        title="回复偏好：简短自然",
+        content="用户喜欢短一点、自然一点的回答。",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.91,
+        score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.01},
+        embedding_status="disabled",
+    )
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_memory_query",
+        lambda *args, **kwargs: routes.QueryAnalysis(
+            intent_summary="查找回复偏好",
+            keywords=["回答偏好", "老婆"],
+            negative_keywords=["长篇"],
+            duration_ms=8.5,
+        ),
+    )
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    get_settings.cache_clear()
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: _FakeDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "老婆我想要短回答"})
+
+    assert response.status_code == 200
+    summary = records[0]["response_summary"]
+    assert summary["keyword_source"] == "ai"
+    assert summary["intent_summary"] == "查找回复偏好"
+    assert summary["ai_keywords"] == ["回答偏好", "老婆"]
+    assert summary["negative_keywords"] == ["长篇"]
+    assert summary["ai_ignored_terms"] == ["老婆:弱检索词"]
+    assert summary["ai_error"] == ""
+    assert summary["ai_duration_ms"] == 8.5
+    assert summary["query_terms"] == ["回答偏好"]
 
 
 def test_context_ignores_numeric_and_user_stopwords(monkeypatch) -> None:
@@ -332,7 +390,7 @@ def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
     payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="苹果 回答")
 
-    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = routes._search_results(
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
         _FakeDb(),
         SimpleNamespace(id=uuid4()),
         payload,
@@ -344,6 +402,123 @@ def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
     assert duration_ms >= 0
     assert query_terms == ["苹果"]
     assert ignored_terms == ["回答:高频弱词"]
+    assert query_analysis["keyword_source"] == "disabled"
+    assert len(calls) == 1
+    assert calls[0][4] == "苹果"
+    assert calls[0][5] == ["苹果"]
+
+
+def test_search_results_uses_ai_query_analysis_when_available(monkeypatch) -> None:
+    calls = []
+
+    def _fake_search_memories(*args):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_memory_query",
+        lambda *args, **kwargs: routes.QueryAnalysis(
+            intent_summary="生成兔女郎图片",
+            keywords=["黑丝", "兔女郎", "腿更粗", "身材更好"],
+            negative_keywords=[],
+            duration_ms=12.5,
+        ),
+    )
+    monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
+    payload = MemorySearchRequest(agent_id="assistant", category="图片", query="老婆换成黑丝，然后腿粗一点，身材更好一些")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is True
+    assert duration_ms >= 0
+    assert query_terms == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
+    assert ignored_terms == []
+    assert query_analysis["keyword_source"] == "ai"
+    assert query_analysis["intent_summary"] == "生成兔女郎图片"
+    assert query_analysis["ai_keywords"] == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
+    assert query_analysis["ai_duration_ms"] == 12.5
+    assert len(calls) == 1
+    assert calls[0][4] == "黑丝 兔女郎 腿更粗 身材更好"
+    assert calls[0][5] == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
+
+
+def test_search_results_does_not_fallback_when_ai_keywords_are_empty(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_memory_query",
+        lambda *args, **kwargs: routes.QueryAnalysis(
+            intent_summary="弱请求词",
+            keywords=["老婆", "换成", "一点", "一些"],
+            negative_keywords=[],
+            duration_ms=10.0,
+        ),
+    )
+    monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
+    payload = MemorySearchRequest(agent_id="assistant", category="图片", query="老婆换成黑丝")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is True
+    assert query_terms == []
+    assert "老婆:弱检索词" in ignored_terms
+    assert query_analysis["keyword_source"] == "ai"
+    assert query_analysis["ai_ignored_terms"] == ignored_terms
+    assert calls == []
+
+
+def test_search_results_falls_back_when_ai_query_analysis_fails(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(routes, "analyze_memory_query", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad json")))
+    monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
+    payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="苹果")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is True
+    assert query_terms == ["苹果"]
+    assert ignored_terms == []
+    assert query_analysis["keyword_source"] == "failed"
+    assert "bad json" in query_analysis["ai_error"]
     assert len(calls) == 1
     assert calls[0][4] == "苹果"
     assert calls[0][5] == ["苹果"]
@@ -535,7 +710,7 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
     payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="自然 回复")
 
-    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = routes._search_results(
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
         _FakeDb(),
         SimpleNamespace(id=uuid4()),
         payload,
@@ -547,6 +722,7 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
     assert duration_ms >= 0
     assert query_terms == ["自然", "回复"]
     assert ignored_terms == []
+    assert query_analysis["keyword_source"] == "disabled"
     assert len(calls[0]) == 6
     assert calls[0][4] == "自然 回复"
     assert calls[0][5] == ["自然", "回复"]

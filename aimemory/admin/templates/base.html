@@ -20,6 +20,7 @@
         <a href="/admin/categories" class="{{ 'active' if request.url.path.startswith('/admin/categories') else '' }}">分类</a>
         <a href="/admin/memories" class="{{ 'active' if request.url.path.startswith('/admin/memories') else '' }}">记忆</a>
         <a href="/admin/ai-settings" class="{{ 'active' if request.url.path.startswith('/admin/ai-settings') or request.url.path.startswith('/admin/ai-reviews') else '' }}">AI 整理</a>
+        <a href="/admin/ai-chat" class="{{ 'active' if request.url.path.startswith('/admin/ai-chat') else '' }}">AI 对话</a>
         <a href="/admin/search-stopwords" class="{{ 'active' if request.url.path.startswith('/admin/search-stopwords') else '' }}">停用词</a>
         <a href="/admin/request-logs" class="{{ 'active' if request.url.path.startswith('/admin/request-logs') else '' }}">请求日志</a>
         <a href="/admin/health" class="{{ 'active' if request.url.path.startswith('/admin/health') else '' }}">健康检查</a>

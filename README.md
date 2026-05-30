@@ -146,6 +146,19 @@ The default values target DeepSeek: `https://api.deepseek.com` and
 `deepseek-v4-flash`. Review actions send the selected full memory content to
 that provider and only write changes after an admin applies each suggestion.
 
+The same AI configuration powers `/admin/ai-chat`, a ChatGPT-style admin helper
+for project questions, configuration checks, request-log analysis, and database
+inspection. It injects an AIMemory project summary and schema summary on every
+turn. The first version can automatically execute only restricted read-only
+`SELECT` / `WITH ... SELECT` queries, never database writes.
+
+When AI retrieval prompting is enabled in `/admin/ai-settings`, `/v1/memories/context`
+and `/v1/memories/search` first ask the configured OpenAI-compatible model to
+summarize the user request into a short intent and effective search keywords.
+The model never reads the memory database directly; PostgreSQL still performs
+the actual category-scoped retrieval. If the model call fails, AIMemory falls
+back to the local rule-based tokenizer.
+
 ## Configuration
 
 All files are UTF-8. Database initialization in Docker Compose uses UTF8.

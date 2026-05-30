@@ -85,6 +85,7 @@ function rememberRecentUserInput(cache, event = {}, ctx = {}, text = "") {
     return;
   }
   cache.set(memoryTurnKey(event, ctx), { text: value, at: Date.now() });
+  cache.set("default", { text: value, at: Date.now() });
 }
 
 function consumeRecentUserInput(cache, event = {}, ctx = {}, maxChars = 1500) {

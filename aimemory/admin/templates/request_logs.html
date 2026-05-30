@@ -120,6 +120,47 @@
                 <span class="summary-label">请求内容</span>
                 <strong>{{ summary.get("query_preview") or summary.get("query") or "未记录" }}</strong>
               </div>
+              {% if summary.get("keyword_source") %}
+              <div>
+                <span class="summary-label">AI 理解</span>
+                <span class="term-list">
+                  <code class="term-chip">来源 {{ summary.get("keyword_source") }}</code>
+                  {% if summary.get("ai_duration_ms") %}<code class="term-chip">耗时 {{ summary.get("ai_duration_ms") }}ms</code>{% endif %}
+                  {% if summary.get("intent_summary") %}<code class="term-chip">{{ summary.get("intent_summary") }}</code>{% endif %}
+                  {% if summary.get("ai_error") %}<code class="term-chip ignored">{{ summary.get("ai_error") }}</code>{% endif %}
+                </span>
+              </div>
+              <div>
+                <span class="summary-label">AI 提取关键词</span>
+                <span class="term-list">
+                  {% for term in summary.get("ai_keywords", []) %}
+                  <code class="term-chip hit">{{ term }}</code>
+                  {% else %}
+                  <span class="muted">无</span>
+                  {% endfor %}
+                </span>
+              </div>
+              {% if summary.get("negative_keywords") %}
+              <div>
+                <span class="summary-label">AI 排除关键词</span>
+                <span class="term-list">
+                  {% for term in summary.get("negative_keywords", []) %}
+                  <code class="term-chip ignored">{{ term }}</code>
+                  {% endfor %}
+                </span>
+              </div>
+              {% endif %}
+              <div>
+                <span class="summary-label">AI 忽略关键词</span>
+                <span class="term-list">
+                  {% for term in summary.get("ai_ignored_terms", []) %}
+                  <code class="term-chip ignored">{{ term }}</code>
+                  {% else %}
+                  <span class="muted">无</span>
+                  {% endfor %}
+                </span>
+              </div>
+              {% endif %}
               <div>
                 <span class="summary-label">请求参数</span>
                 <span class="term-list">

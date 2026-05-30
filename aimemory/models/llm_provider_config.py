@@ -21,6 +21,9 @@ class LlmProviderConfig(Base):
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     extra_body_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    query_analysis_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    query_analysis_max_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=256, server_default="256")
+    query_analysis_timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=3000, server_default="3000")
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True),

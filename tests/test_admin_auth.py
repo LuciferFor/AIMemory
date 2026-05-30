@@ -8,6 +8,7 @@ from aimemory.admin.auth import COOKIE_NAME, get_serializer
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
+from aimemory.models.ai_chat import AiChatMessage, AiChatThread
 from aimemory.models.ai_memory_review import AiMemoryReviewSuggestion
 from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory_category import MemoryCategory
@@ -258,6 +259,9 @@ class _AiReviewDb(_MemoryDb):
             temperature=0.0,
             extra_body_json={},
             enabled=True,
+            query_analysis_enabled=True,
+            query_analysis_max_output_tokens=256,
+            query_analysis_timeout_ms=3000,
         )
         self.runs = {}
         self.suggestions = {}
@@ -281,6 +285,60 @@ class _AiReviewDb(_MemoryDb):
         for value in self.added:
             if getattr(value, "id", None) is None:
                 value.id = uuid.uuid4()
+
+
+class _AiChatDb(_FakeDb):
+    def __init__(self) -> None:
+        self.thread_id = uuid.uuid4()
+        self.thread = AiChatThread(id=self.thread_id, admin_username="admin", title="测试对话")
+        self.thread.messages = []
+        self.threads = [self.thread]
+        self.config = LlmProviderConfig(
+            id=uuid.uuid4(),
+            name="default",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-flash",
+            encrypted_api_key=encrypt_secret("sk-test", "test-ai-secret"),
+            api_key_hint="sk...test",
+            timeout_ms=30000,
+            max_output_tokens=4096,
+            temperature=0.0,
+            extra_body_json={},
+            enabled=True,
+            query_analysis_enabled=True,
+            query_analysis_max_output_tokens=256,
+            query_analysis_timeout_ms=3000,
+        )
+        self.added = []
+        self.committed = False
+
+    def scalar(self, query):
+        text = str(query)
+        if "ai_chat_threads" in text:
+            return self.thread
+        if "llm_provider_configs" in text:
+            return self.config
+        return self.config
+
+    def scalars(self, query) -> _Rows:
+        return _Rows(self.threads)
+
+    def add(self, value) -> None:
+        if getattr(value, "id", None) is None:
+            value.id = uuid.uuid4()
+        if isinstance(value, AiChatThread):
+            value.messages = getattr(value, "messages", [])
+            if value not in self.threads:
+                self.threads.insert(0, value)
+            self.thread = value
+        if isinstance(value, AiChatMessage):
+            target = next((item for item in self.threads if item.id == value.thread_id), self.thread)
+            if value not in target.messages:
+                target.messages.append(value)
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.committed = True
 
 
 class _StopwordDb(_FakeDb):
@@ -534,6 +592,9 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
             "temperature": "0",
             "extra_body_json": '{"thinking":{"type":"disabled"}}',
             "enabled": "on",
+            "query_analysis_enabled": "on",
+            "query_analysis_max_output_tokens": "256",
+            "query_analysis_timeout_ms": "3000",
         },
         follow_redirects=False,
     )
@@ -550,7 +611,96 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
     assert db.config.max_output_tokens == 2048
     assert db.config.extra_body_json == {"thinking": {"type": "disabled"}}
     assert db.config.enabled is True
+    assert db.config.query_analysis_enabled is True
+    assert db.config.query_analysis_max_output_tokens == 256
+    assert db.config.query_analysis_timeout_ms == 3000
     assert db.committed is True
+
+
+def test_admin_ai_chat_requires_login(monkeypatch) -> None:
+    client = _client(monkeypatch)
+
+    response = client.get("/admin/ai-chat", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/login")
+
+
+def test_admin_ai_chat_home_lists_threads(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get("/admin/ai-chat")
+
+    assert response.status_code == 200
+    assert "AI 对话" in response.text
+    assert "新对话" in response.text
+    assert "测试对话" in response.text
+
+
+def test_admin_can_create_ai_chat_thread(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post("/admin/ai-chat", data={"csrf_token": csrf}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/ai-chat/")
+    assert any(isinstance(item, AiChatThread) and item.title == "新对话" for item in db.added)
+    assert db.committed is True
+
+
+def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    captured = {}
+
+    def fake_generate(db_arg, *, config, api_key, history):
+        captured["api_key"] = api_key
+        captured["history"] = history
+        return {
+            "content": "这里是 AI 回复。",
+            "metadata": {
+                "sql_results": [
+                    {
+                        "title": "分类数量",
+                        "purpose": "查看分类",
+                        "sql": "select count(*) from memory_categories",
+                        "status": "ok",
+                        "columns": ["count"],
+                        "rows": [{"count": 3}],
+                        "row_count": 1,
+                        "truncated": False,
+                        "error": None,
+                    }
+                ]
+            },
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        }
+
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/ai-chat/{db.thread_id}/messages",
+        data={"csrf_token": csrf, "content": "查一下分类数量"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/ai-chat/{db.thread_id}"
+    assert captured["api_key"] == "sk-test"
+    assert captured["history"][-1].content == "查一下分类数量"
+    assert db.thread.messages[-2].role == "user"
+    assert db.thread.messages[-1].role == "assistant"
+    assert db.thread.messages[-1].content == "这里是 AI 回复。"
+    assert db.thread.messages[-1].metadata_json["sql_results"][0]["row_count"] == 1
+    assert db.thread.messages[-1].total_tokens == 3
 
 
 def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
@@ -558,9 +708,10 @@ def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
     db = _AiReviewDb()
     captured = {}
 
-    def fake_chat_completion(config, api_key, messages):
+    def fake_chat_completion(config, api_key, messages, **kwargs):
         captured["api_key"] = api_key
         captured["messages"] = messages
+        captured["response_format"] = kwargs.get("response_format")
         return SimpleNamespace(
             content=json.dumps(
                 {
@@ -594,6 +745,7 @@ def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
     assert response.headers["location"].startswith("/admin/ai-reviews/")
     assert captured["api_key"] == "sk-test"
     assert "只输出 JSON" in captured["messages"][0]["content"]
+    assert captured["response_format"] == {"type": "json_object"}
     assert len(db.suggestions) == 1
     suggestion = next(iter(db.suggestions.values()))
     assert suggestion.suggestion_type == "rewrite"

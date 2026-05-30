@@ -27,6 +27,7 @@ from aimemory.admin.auth import (
 from aimemory.core.config import get_settings
 from aimemory.core.security import api_key_prefix, generate_api_key, hash_api_key
 from aimemory.db.session import get_db
+from aimemory.models.ai_chat import AiChatMessage, AiChatThread
 from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSuggestion
 from aimemory.models.api_key import ApiKey
 from aimemory.models.llm_provider_config import LlmProviderConfig
@@ -49,6 +50,7 @@ from aimemory.repositories.search_stopwords import (
 )
 from aimemory.services.attachments import attachment_search_text
 from aimemory.services.ai_crypto import AiConfigEncryptionError, decrypt_secret, encrypt_secret, mask_secret
+from aimemory.services.ai_chat import generate_ai_chat_reply, make_thread_title
 from aimemory.services.ai_memory_review import (
     AiMemoryReviewError,
     apply_suggestion,
@@ -64,7 +66,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260531-0120"
+ADMIN_ASSET_VERSION = "20260531-0145"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -240,6 +242,15 @@ def ai_config_view(config: LlmProviderConfig | None) -> dict[str, Any]:
         "temperature": config.temperature if config else defaults["temperature"],
         "extra_body_json": json.dumps(config.extra_body_json if config else defaults["extra_body_json"], ensure_ascii=False, indent=2),
         "enabled": config.enabled if config else defaults["enabled"],
+        "query_analysis_enabled": getattr(config, "query_analysis_enabled", defaults["query_analysis_enabled"]) if config else defaults["query_analysis_enabled"],
+        "query_analysis_max_output_tokens": getattr(
+            config,
+            "query_analysis_max_output_tokens",
+            defaults["query_analysis_max_output_tokens"],
+        )
+        if config
+        else defaults["query_analysis_max_output_tokens"],
+        "query_analysis_timeout_ms": getattr(config, "query_analysis_timeout_ms", defaults["query_analysis_timeout_ms"]) if config else defaults["query_analysis_timeout_ms"],
     }
 
 
@@ -644,6 +655,8 @@ async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
         timeout_ms = max(500, min(600000, int(form.get("timeout_ms", "30000"))))
         max_output_tokens = max(1, min(200000, int(form.get("max_output_tokens", "4096"))))
         temperature = max(0.0, min(2.0, float(form.get("temperature", "0"))))
+        query_analysis_max_output_tokens = max(1, min(4096, int(form.get("query_analysis_max_output_tokens", "256"))))
+        query_analysis_timeout_ms = max(500, min(600000, int(form.get("query_analysis_timeout_ms", "3000"))))
     except ValueError as exc:
         return redirect_to("/admin/ai-settings", error=str(exc))
 
@@ -662,6 +675,9 @@ async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
     config.temperature = temperature
     config.extra_body_json = extra_body_json
     config.enabled = form.get("enabled") == "on"
+    config.query_analysis_enabled = form.get("query_analysis_enabled") == "on"
+    config.query_analysis_max_output_tokens = query_analysis_max_output_tokens
+    config.query_analysis_timeout_ms = query_analysis_timeout_ms
     api_key = form.get("api_key", "").strip()
     if api_key:
         secret = get_settings().ai_config_encryption_secret
@@ -696,10 +712,152 @@ async def test_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
                 {"role": "system", "content": "你是连接测试助手，只输出 json。"},
                 {"role": "user", "content": "输出 {\"ok\": true} 这个 json。"},
             ],
+            response_format={"type": "json_object"},
         )
     except (AiConfigEncryptionError, OpenAICompatibleError) as exc:
         return redirect_to("/admin/ai-settings", error=str(exc))
     return redirect_to("/admin/ai-settings", notice="AI 连接测试成功。")
+
+
+def load_ai_chat_threads(db: Session, admin_username: str) -> list[AiChatThread]:
+    return db.scalars(
+        select(AiChatThread)
+        .where(AiChatThread.admin_username == admin_username)
+        .where(AiChatThread.deleted_at.is_(None))
+        .order_by(AiChatThread.updated_at.desc(), AiChatThread.created_at.desc())
+        .limit(80)
+    ).all()
+
+
+def load_ai_chat_thread(db: Session, thread_id: uuid.UUID, admin_username: str) -> AiChatThread:
+    thread = db.scalar(
+        select(AiChatThread)
+        .options(selectinload(AiChatThread.messages))
+        .where(AiChatThread.id == thread_id)
+        .where(AiChatThread.admin_username == admin_username)
+        .where(AiChatThread.deleted_at.is_(None))
+    )
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 对话不存在。")
+    return thread
+
+
+def ai_chat_context(
+    request: Request,
+    session: dict[str, Any],
+    db: Session,
+    *,
+    thread: AiChatThread | None = None,
+    ai_chat_error: str | None = None,
+) -> dict[str, Any]:
+    config = get_llm_config(db)
+    return base_context(
+        request,
+        session,
+        threads=load_ai_chat_threads(db, session["sub"]),
+        thread=thread,
+        ai_configured=bool(config and config.enabled and config.encrypted_api_key),
+        ai_model=config.model if config else "",
+        ai_chat_error=ai_chat_error,
+    )
+
+
+@router.get("/ai-chat")
+def ai_chat_home(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    return templates.TemplateResponse(
+        request,
+        "ai_chat.html",
+        ai_chat_context(request, session, db),
+    )
+
+
+@router.post("/ai-chat")
+async def create_ai_chat_thread(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    thread = AiChatThread(admin_username=session["sub"], title="新对话")
+    db.add(thread)
+    db.commit()
+    return redirect_to(f"/admin/ai-chat/{thread.id}")
+
+
+@router.get("/ai-chat/{thread_id}")
+def ai_chat_thread_page(thread_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    thread = load_ai_chat_thread(db, thread_id, session["sub"])
+    return templates.TemplateResponse(
+        request,
+        "ai_chat.html",
+        ai_chat_context(request, session, db, thread=thread),
+    )
+
+
+@router.post("/ai-chat/{thread_id}/messages")
+async def send_ai_chat_message(thread_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    content = form.get("content", "").strip()
+    if not content:
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error="请输入要发送给 AI 的内容。")
+    if len(content) > 12000:
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error="单条消息不能超过 12000 字。")
+
+    thread = load_ai_chat_thread(db, thread_id, session["sub"])
+    config = get_llm_config(db)
+    if config is None or not config.enabled:
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error="AI 配置未启用，请先到 AI 整理页面保存并启用配置。")
+
+    try:
+        api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
+    except AiConfigEncryptionError as exc:
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error=str(exc))
+
+    existing_messages = list(thread.messages)
+    user_message = AiChatMessage(thread_id=thread.id, role="user", content=content, metadata_json={})
+    db.add(user_message)
+    if not existing_messages:
+        thread.title = make_thread_title(content)
+    thread.updated_at = utcnow()
+    db.add(thread)
+    db.commit()
+
+    history = existing_messages + [user_message]
+    try:
+        result = generate_ai_chat_reply(db, config=config, api_key=api_key, history=history)
+        usage = result.get("usage") or {}
+        assistant_message = AiChatMessage(
+            thread_id=thread.id,
+            role="assistant",
+            content=str(result.get("content") or ""),
+            metadata_json=result.get("metadata") or {},
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+        )
+    except Exception as exc:
+        assistant_message = AiChatMessage(
+            thread_id=thread.id,
+            role="assistant",
+            content=f"AI 对话失败：{str(exc)[:1000]}",
+            metadata_json={"error": str(exc)[:1000]},
+            error=str(exc)[:2000],
+        )
+    db.add(assistant_message)
+    thread.updated_at = utcnow()
+    db.add(thread)
+    db.commit()
+    return redirect_to(f"/admin/ai-chat/{thread.id}")
 
 
 @router.get("/categories")

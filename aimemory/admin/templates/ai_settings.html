@@ -31,6 +31,16 @@
       <input type="checkbox" name="enabled" {{ "checked" if config.enabled else "" }}>
       启用 AI 整理
     </label>
+    <label class="checkbox-line">
+      <input type="checkbox" name="query_analysis_enabled" {{ "checked" if config.query_analysis_enabled else "" }}>
+      启用 AI 检索提词
+    </label>
+    <label>提词最大输出 Token
+      <input name="query_analysis_max_output_tokens" type="number" min="1" max="4096" value="{{ config.query_analysis_max_output_tokens }}">
+    </label>
+    <label>提词超时毫秒
+      <input name="query_analysis_timeout_ms" type="number" min="500" max="600000" value="{{ config.query_analysis_timeout_ms }}">
+    </label>
     {% if not encryption_ready %}
     <div class="notice error wide">AI_CONFIG_ENCRYPTION_SECRET 未配置，不能保存新的 API Key。</div>
     {% endif %}
@@ -48,5 +58,6 @@
 <section class="panel">
   <h2>使用方式</h2>
   <p class="muted">在“记忆”列表勾选记录后点击“AI 整理选中记忆”，或进入单条详情点击“AI 整理此记忆”。AI 只生成建议，修改需要管理员逐条确认。</p>
+  <p class="muted">启用“AI 检索提词”后，/context 和 /search 会先让模型把用户请求压缩成检索关键词；模型失败时自动回退纯算法分词。</p>
 </section>
 {% endblock %}

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse, Response
 
 from aimemory.api.deps import get_current_user
+from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.models.user import User
 from aimemory.repositories.memory_categories import get_active_category, list_category_summaries
@@ -40,6 +41,9 @@ from aimemory.schemas.memory import (
     ScoreParts,
 )
 from aimemory.services.attachments import AttachmentValidationError
+from aimemory.services.ai_crypto import decrypt_secret
+from aimemory.services.ai_memory_review import get_llm_config
+from aimemory.services.query_analysis import QueryAnalysis, analyze_memory_query, effective_terms_from_ai_keywords
 from aimemory.services.text import filter_query_terms, normalize_query
 
 logger = logging.getLogger(__name__)
@@ -168,7 +172,11 @@ def search_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemorySearchResponse:
-    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = _search_results(db, current_user, payload)
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = _search_results(
+        db,
+        current_user,
+        payload,
+    )
     logger.info(
         "memory.search",
         extra={
@@ -182,6 +190,8 @@ def search_memory(
             "used_vector": used_vector,
             "query_term_count": len(query_terms),
             "ignored_term_count": len(ignored_terms),
+            "keyword_source": query_analysis.get("keyword_source"),
+            "ai_duration_ms": query_analysis.get("ai_duration_ms"),
             "duration_ms": duration_ms,
         },
     )
@@ -213,7 +223,11 @@ def build_memory_context(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
-    results, used_vector, search_duration_ms, query_terms, ignored_terms, category_found = _search_results(db, current_user, payload)
+    results, used_vector, search_duration_ms, query_terms, ignored_terms, category_found, query_analysis = _search_results(
+        db,
+        current_user,
+        payload,
+    )
     context_text = build_context_text(results, payload.max_chars)
     request.state.request_log_response_summary = build_context_response_summary(
         payload.agent_id,
@@ -223,6 +237,7 @@ def build_memory_context(
         payload.top_k,
         query_terms,
         ignored_terms,
+        query_analysis,
         results,
         context_text,
         payload.max_chars,
@@ -242,6 +257,8 @@ def build_memory_context(
             "truncated": bool(context_text) and len(context_text) >= payload.max_chars,
             "query_term_count": len(query_terms),
             "ignored_term_count": len(ignored_terms),
+            "keyword_source": query_analysis.get("keyword_source"),
+            "ai_duration_ms": query_analysis.get("ai_duration_ms"),
             "duration_ms": search_duration_ms,
         },
     )
@@ -348,9 +365,17 @@ def _search_results(
     stopwords = active_search_stopword_terms(db, current_user.id)
     category = get_active_category(db, current_user.id, payload.category)
     if category is None:
-        return [], False, round((time.perf_counter() - start) * 1000, 2), [], [f"{payload.category}:分类不存在"], False
+        return (
+            [],
+            False,
+            round((time.perf_counter() - start) * 1000, 2),
+            [],
+            [f"{payload.category}:分类不存在"],
+            False,
+            default_query_analysis_meta("disabled"),
+        )
 
-    query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+    query_terms, ignored_terms, query_analysis = query_terms_for_search(db, payload, stopwords)
     query_terms, high_frequency_ignored_terms = filter_high_frequency_terms(
         db,
         current_user.id,
@@ -359,12 +384,79 @@ def _search_results(
         query_terms,
     )
     ignored_terms.extend(high_frequency_ignored_terms)
+    if query_analysis.get("keyword_source") == "ai" and high_frequency_ignored_terms:
+        query_analysis["ai_ignored_terms"] = [
+            *query_analysis.get("ai_ignored_terms", []),
+            *high_frequency_ignored_terms,
+        ]
     if not query_terms:
-        return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True
+        return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
 
     normalized_query = normalize_query(" ".join(query_terms))
     results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms)
-    return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True
+    return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
+
+
+def query_terms_for_search(
+    db: Session,
+    payload: MemorySearchRequest | MemoryContextRequest,
+    stopwords: set[str],
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    config = get_llm_config(db)
+    if not query_analysis_enabled(config):
+        query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+        return query_terms, ignored_terms, default_query_analysis_meta("disabled")
+
+    try:
+        api_key = decrypt_secret(config.encrypted_api_key, get_settings().ai_config_encryption_secret)
+        analysis = analyze_memory_query(
+            config,
+            api_key,
+            query=payload.query,
+            category=payload.category,
+            agent_id=payload.agent_id,
+        )
+        query_terms, ignored_terms = effective_terms_from_ai_keywords(analysis.keywords, stopwords)
+        meta = query_analysis_meta("ai", analysis)
+        meta["ai_ignored_terms"] = ignored_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
+        return query_terms, ignored_terms, meta
+    except Exception as exc:
+        query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+        return query_terms, ignored_terms, default_query_analysis_meta("failed", str(exc))
+
+
+def query_analysis_enabled(config: Any) -> bool:
+    if config is None:
+        return False
+    return bool(
+        getattr(config, "enabled", False)
+        and getattr(config, "query_analysis_enabled", True)
+        and getattr(config, "encrypted_api_key", None)
+    )
+
+
+def default_query_analysis_meta(keyword_source: str, error: str = "") -> dict[str, Any]:
+    return {
+        "keyword_source": keyword_source,
+        "intent_summary": "",
+        "ai_keywords": [],
+        "negative_keywords": [],
+        "ai_ignored_terms": [],
+        "ai_error": str(error or "")[:300],
+        "ai_duration_ms": 0.0,
+    }
+
+
+def query_analysis_meta(keyword_source: str, analysis: QueryAnalysis) -> dict[str, Any]:
+    return {
+        "keyword_source": keyword_source,
+        "intent_summary": analysis.intent_summary,
+        "ai_keywords": analysis.keywords,
+        "negative_keywords": analysis.negative_keywords,
+        "ai_ignored_terms": [],
+        "ai_error": "",
+        "ai_duration_ms": analysis.duration_ms,
+    }
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:
@@ -398,6 +490,7 @@ def build_context_response_summary(
     top_k: int,
     query_terms: list[str],
     ignored_terms: list[str],
+    query_analysis: dict[str, Any],
     results: list[Any],
     context_text: str,
     max_chars: int,
@@ -414,6 +507,13 @@ def build_context_response_summary(
         "query_preview": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
         "top_k": top_k,
         "max_chars": max_chars,
+        "keyword_source": query_analysis.get("keyword_source", "disabled"),
+        "intent_summary": query_analysis.get("intent_summary", ""),
+        "ai_keywords": query_analysis.get("ai_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
+        "negative_keywords": query_analysis.get("negative_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
+        "ai_ignored_terms": query_analysis.get("ai_ignored_terms", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
+        "ai_error": query_analysis.get("ai_error", ""),
+        "ai_duration_ms": query_analysis.get("ai_duration_ms", 0.0),
         "query_terms": logged_terms,
         "ignored_terms": logged_ignored_terms,
         "result_count": len(results),

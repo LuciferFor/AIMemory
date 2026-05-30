@@ -389,6 +389,59 @@ test("runtime uses one-shot message_received user input instead of internal role
   assert.equal(contextBodies[0].query, "老婆来点福利美照");
 });
 
+test("runtime uses fallback user input when prompt build has a different turn key", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return '{"category":"未分类"}';
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.message_received(
+    { text: "老婆出个兔女郎的", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+  await handlers.before_prompt_build(
+    { input: "internal generated prompt", chatType: "direct", turnId: "turn-2" },
+    { turnId: "turn-2" },
+  );
+  await handlers.before_prompt_build(
+    { input: "another internal generated prompt", chatType: "direct", turnId: "turn-3" },
+    { turnId: "turn-3" },
+  );
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].query, "老婆出个兔女郎的");
+});
+
 test("runtime compaction skips unstructured prompt and transcript", async () => {
   const handlers = {};
   let fetchCalls = 0;
