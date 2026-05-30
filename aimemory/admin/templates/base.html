@@ -49,6 +49,37 @@
         event.preventDefault();
       }
     });
+    function selectAllTargets(master) {
+      const name = master.dataset.selectAll;
+      if (!name) {
+        return [];
+      }
+      return Array.from(document.getElementsByName(name)).filter(function (item) {
+        return item instanceof HTMLInputElement && item.type === "checkbox" && !item.disabled;
+      });
+    }
+    function syncSelectAll(master) {
+      const targets = selectAllTargets(master);
+      const checkedCount = targets.filter(function (item) { return item.checked; }).length;
+      master.disabled = targets.length === 0;
+      master.checked = targets.length > 0 && checkedCount === targets.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < targets.length;
+    }
+    document.querySelectorAll("[data-select-all]").forEach(syncSelectAll);
+    document.addEventListener("change", function (event) {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
+        return;
+      }
+      if (target.dataset.selectAll) {
+        for (const item of selectAllTargets(target)) {
+          item.checked = target.checked;
+        }
+        syncSelectAll(target);
+        return;
+      }
+      document.querySelectorAll("[data-select-all='" + target.name + "']").forEach(syncSelectAll);
+    });
   </script>
 </body>
 </html>

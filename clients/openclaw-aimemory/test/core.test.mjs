@@ -97,13 +97,8 @@ test("clean query skips prompt-only and assistant-only turns", () => {
 
   assert.equal(buildCleanMemoryQueryFromTurn(event), "");
   assert.equal(buildCleanMemoryQueryFromTurn(event, {}, 1500, { includePrompt: true }), "");
-  assert.equal(
-    buildCleanMemoryQueryFromTurn({
-      input: "dark armor fantasy poster",
-      currentMessage: "这是一段无角色模型回复",
-    }),
-    "",
-  );
+  assert.equal(buildCleanMemoryQueryFromTurn({ input: "dark armor fantasy poster" }), "");
+  assert.equal(buildCleanMemoryQueryFromTurn({ input: "入队了，宝贝。 任务号：`123`" }), "");
   assert.equal(
     buildCleanMemoryQueryFromTurn({
       message: { role: "assistant", content: "这是一段模型回复" },
@@ -114,6 +109,7 @@ test("clean query skips prompt-only and assistant-only turns", () => {
 });
 
 test("clean query accepts only explicit current user fields or role user objects", () => {
+  assert.equal(buildCleanMemoryQueryFromTurn({ input: "老婆来点福利美照" }), "老婆来点福利美照");
   assert.equal(
     buildCleanMemoryQueryFromTurn({
       input: { role: "user", content: "老婆来点福利美照" },

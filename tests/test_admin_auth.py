@@ -722,6 +722,8 @@ def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
     assert response.status_code == 200
     assert "memory-table" in response.text
     assert "col-actions" in response.text
+    assert "全选" in response.text
+    assert 'data-select-all="memory_ids"' in response.text
     assert "action-buttons" in response.text
     assert "action-button detail" in response.text
     assert "action-button danger" in response.text

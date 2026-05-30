@@ -486,6 +486,32 @@ th {
   width: 60px;
 }
 
+.select-all-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all-control input,
+.select-cell input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.select-all-control:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .memory-table .col-memory {
   width: 30%;
 }

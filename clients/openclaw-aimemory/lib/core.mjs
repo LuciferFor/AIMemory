@@ -261,6 +261,26 @@ function addUnique(parts, seen, value) {
   seen.add(text);
 }
 
+export function isLikelyRolelessUserInput(value) {
+  const text = extractText(value).trim();
+  if (!text || text.length > 200) {
+    return false;
+  }
+  if (!/[\p{Script=Han}]/u.test(text)) {
+    return false;
+  }
+  const internalPattern =
+    /\[CQ:|\[Image\]|Recent group context|NO_REPLY|User text:|System:|Developer:|Assistant:|任务号[:：]|入队了|```|https?:\/\//i;
+  if (internalPattern.test(text)) {
+    return false;
+  }
+  const asciiLetters = text.match(/[A-Za-z]/g)?.length || 0;
+  if (asciiLetters >= 24) {
+    return false;
+  }
+  return true;
+}
+
 function addUserMessageCandidate(parts, seen, value, { allowRoleless = false } = {}) {
   if (value == null) {
     return;
@@ -306,7 +326,9 @@ export function extractCurrentUserInputText(event = {}) {
     event.currentInput,
     event.current_input,
   ]) {
-    addUserMessageCandidate(parts, seen, value);
+    addUserMessageCandidate(parts, seen, value, {
+      allowRoleless: isLikelyRolelessUserInput(value),
+    });
   }
 
   for (const value of [event.message]) {
