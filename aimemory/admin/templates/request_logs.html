@@ -112,7 +112,7 @@
             <div class="summary-query">
               <div>
                 <span class="summary-label">请求内容</span>
-                <strong>{{ summary.get("query") or "未记录" }}</strong>
+                <strong>{{ summary.get("query_preview") or summary.get("query") or "未记录" }}</strong>
               </div>
               <div>
                 <span class="summary-label">请求参数</span>
@@ -124,7 +124,7 @@
                 </span>
               </div>
               <div>
-                <span class="summary-label">拆分关键词</span>
+                <span class="summary-label">有效关键词</span>
                 <span class="term-list">
                   {% for term in summary.get("query_terms", []) %}
                   <code class="term-chip">{{ term }}</code>
@@ -159,10 +159,32 @@
                     {% for term in item.get("matched_terms", []) %}
                     <code class="term-chip hit">{{ term }}</code>
                     {% else %}
-                    <span class="muted">未记录明确关键词，可能是模糊匹配</span>
+                    <span class="muted">无</span>
                     {% endfor %}
                   </span>
                 </div>
+                <div class="matched-terms">
+                  <span class="summary-label">命中字段</span>
+                  <span class="term-list">
+                    {% for field in item.get("matched_fields", []) %}
+                    <code class="term-chip">{{ field }}</code>
+                    {% else %}
+                    <span class="muted">无</span>
+                    {% endfor %}
+                  </span>
+                </div>
+                {% if item.get("score_parts") %}
+                <div class="matched-terms">
+                  <span class="summary-label">分数明细</span>
+                  <span class="term-list">
+                    {% for name, value in item.get("score_parts", {}).items() %}
+                    {% if value %}
+                    <code class="term-chip">{{ name }} {{ "%.3f"|format(value) }}</code>
+                    {% endif %}
+                    {% endfor %}
+                  </span>
+                </div>
+                {% endif %}
                 <p>{{ item['content_preview'] }}</p>
               </article>
               {% endfor %}

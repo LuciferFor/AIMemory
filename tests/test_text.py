@@ -42,7 +42,7 @@ def test_filter_query_terms_can_return_no_effective_terms() -> None:
 
 
 def test_filter_query_terms_records_quality_reasons() -> None:
-    terms, ignored = filter_query_terms("AI QQ go int string api json token gpt4 OpenClaw 你 苹果", set())
+    terms, ignored = filter_query_terms("AI QQ go int string api json token gpt4 OpenClaw 你 不要 苹果", set())
 
     assert terms == ["苹果"]
     assert "ai:短英文" in ignored
@@ -53,10 +53,23 @@ def test_filter_query_terms_records_quality_reasons() -> None:
     assert "gpt4:英文数字混合" in ignored
     assert "openclaw:非英文词典" in ignored
     assert "你:中文单字" in ignored
+    assert "不要:弱语义词" in ignored
 
 
 def test_weighted_score_caps_score_parts() -> None:
-    assert weighted_score(keyword=2.0, fuzzy=2.0, term=2.0, title=2.0, exact=2.0, metadata=2.0, recency=2.0) == 1.0
+    assert (
+        weighted_score(
+            keyword=2.0,
+            fuzzy=2.0,
+            term=2.0,
+            title=2.0,
+            content=2.0,
+            exact=2.0,
+            metadata=2.0,
+            recency=2.0,
+        )
+        == 1.0
+    )
 
 
 def test_weighted_score_prefers_title_and_exact_matches() -> None:

@@ -49,6 +49,25 @@ TECHNICAL_QUERY_STOPWORDS = {
     "uuid",
     "var",
 }
+WEAK_CJK_QUERY_STOPWORDS = {
+    "不要",
+    "不是",
+    "不能",
+    "可以",
+    "需要",
+    "应该",
+    "这个",
+    "那个",
+    "这些",
+    "那些",
+    "什么",
+    "怎么",
+    "现在",
+    "目前",
+    "之前",
+    "之后",
+    "时候",
+}
 
 
 def normalize_query(value: str) -> str:
@@ -105,6 +124,8 @@ def ignored_term_reason(term: str) -> str | None:
     if _CJK_RE.fullmatch(normalized):
         if len(normalized) < 2:
             return "中文单字"
+        if normalized in WEAK_CJK_QUERY_STOPWORDS:
+            return "弱语义词"
         return None
     if _ALNUM_RE.fullmatch(normalized) and not _ENGLISH_RE.fullmatch(normalized):
         return "英文数字混合"
@@ -132,6 +153,7 @@ def weighted_score(
     fuzzy: float,
     term: float = 0.0,
     title: float = 0.0,
+    content: float = 0.0,
     exact: float = 0.0,
     metadata: float = 0.0,
     recency: float = 0.0,
@@ -140,16 +162,18 @@ def weighted_score(
     capped_fuzzy = min(max(fuzzy, 0.0), 1.0)
     capped_term = min(max(term, 0.0), 1.0)
     capped_title = min(max(title, 0.0), 1.0)
+    capped_content = min(max(content, 0.0), 1.0)
     capped_exact = min(max(exact, 0.0), 1.0)
     capped_metadata = min(max(metadata, 0.0), 1.0)
     capped_recency = min(max(recency, 0.0), 1.0)
     return min(
         1.0,
-        (0.30 * capped_keyword)
-        + (0.20 * capped_fuzzy)
-        + (0.20 * capped_term)
-        + (0.15 * capped_title)
-        + (0.10 * capped_exact)
-        + (0.03 * capped_metadata)
+        (0.24 * capped_title)
+        + (0.24 * capped_term)
+        + (0.18 * capped_content)
+        + (0.16 * capped_metadata)
+        + (0.08 * capped_exact)
+        + (0.05 * capped_keyword)
+        + (0.03 * capped_fuzzy)
         + (0.02 * capped_recency),
     )

@@ -9,13 +9,25 @@ from aimemory.api import routes
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
-from aimemory.repositories.memories import SearchAttachment, SearchResult
+from aimemory.repositories.memories import SearchAttachment, SearchResult, filter_high_frequency_terms
 from aimemory.schemas.memory import MemorySearchRequest
 
 
 class _FakeDb:
     def scalars(self, query):
         return SimpleNamespace(all=lambda: [])
+
+    def execute(self, query, params=None):
+        return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: []))
+
+
+class _HighFrequencyDb:
+    def execute(self, query, params=None):
+        rows = [
+            {"term": "不要", "match_count": 3, "total_count": 10},
+            {"term": "苹果", "match_count": 1, "total_count": 10},
+        ]
+        return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: rows))
 
 
 def _client_with_user(monkeypatch=None) -> TestClient:
@@ -123,6 +135,7 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     assert summary["type"] == "context"
     assert summary["agent_id"] == "assistant"
     assert summary["query"] == "回答偏好"
+    assert summary["query_preview"] == "回答偏好"
     assert summary["top_k"] == 8
     assert summary["max_chars"] == 3000
     assert summary["ignored_terms"] == []
@@ -134,6 +147,9 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     assert summary["items"][0]["title"] == "回复偏好：简短自然"
     assert "回答" in summary["items"][0]["matched_terms"]
     assert "偏好" in summary["items"][0]["matched_terms"]
+    assert "标题" in summary["items"][0]["matched_fields"]
+    assert "正文" in summary["items"][0]["matched_fields"]
+    assert "score_parts" in summary["items"][0]
     assert len(summary["items"][0]["content_preview"]) <= 80
     rendered = str(summary)
     assert response.json()["context_text"] not in rendered
@@ -201,6 +217,46 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
     assert len(calls) == 1
     assert calls[0][3] == "苹果"
     assert calls[0][4] == ["苹果"]
+
+
+def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
+    calls = []
+
+    def _fake_search_memories(*args):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: set())
+    monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (["苹果"], ["回答:高频弱词"]))
+    monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
+    payload = MemorySearchRequest(agent_id="assistant", query="苹果 回答")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert duration_ms >= 0
+    assert query_terms == ["苹果"]
+    assert ignored_terms == ["回答:高频弱词"]
+    assert len(calls) == 1
+    assert calls[0][3] == "苹果"
+    assert calls[0][4] == ["苹果"]
+
+
+def test_filter_high_frequency_terms_uses_user_memory_distribution() -> None:
+    terms, ignored = filter_high_frequency_terms(
+        _HighFrequencyDb(),
+        uuid4(),
+        "assistant",
+        ["不要", "苹果"],
+    )
+
+    assert terms == ["苹果"]
+    assert ignored == ["不要:高频弱词"]
 
 
 def test_search_returns_attachment_metadata(monkeypatch) -> None:

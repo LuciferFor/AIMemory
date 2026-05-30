@@ -14,6 +14,7 @@ from aimemory.db.session import get_db
 from aimemory.models.user import User
 from aimemory.repositories.memories import (
     SearchAttachment,
+    filter_high_frequency_terms,
     get_attachment_for_user,
     search_memories,
     soft_delete_memory,
@@ -47,7 +48,7 @@ CONTEXT_PROMPT_HEADER = (
     "不要逐字复述；如果记忆与用户当前消息冲突，以当前消息为准。"
 )
 
-REQUEST_LOG_QUERY_PREVIEW_CHARS = 160
+REQUEST_LOG_QUERY_PREVIEW_CHARS = 200
 REQUEST_LOG_QUERY_TERM_LIMIT = 24
 REQUEST_LOG_MATCHED_TERM_LIMIT = 12
 REQUEST_LOG_CONTENT_PREVIEW_CHARS = 80
@@ -319,6 +320,13 @@ def _search_results(
     start = time.perf_counter()
     stopwords = active_search_stopword_terms(db, current_user.id)
     query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+    query_terms, high_frequency_ignored_terms = filter_high_frequency_terms(
+        db,
+        current_user.id,
+        payload.agent_id,
+        query_terms,
+    )
+    ignored_terms.extend(high_frequency_ignored_terms)
     if not query_terms:
         return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms
 
@@ -366,6 +374,7 @@ def build_context_response_summary(
         "type": "context",
         "agent_id": agent_id,
         "query": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
+        "query_preview": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
         "top_k": top_k,
         "max_chars": max_chars,
         "query_terms": logged_terms,
@@ -379,13 +388,46 @@ def build_context_response_summary(
                 "external_id": result.external_id,
                 "title": result.title,
                 "score": result.score,
+                "score_parts": getattr(result, "score_parts", {}),
                 "embedding_status": result.embedding_status,
-                "matched_terms": matched_query_terms(result, logged_terms),
+                "matched_terms": matched_terms_for_log(result, logged_terms),
+                "matched_fields": matched_fields_for_log(result, logged_terms),
                 "content_preview": preview_text(result.content, REQUEST_LOG_CONTENT_PREVIEW_CHARS),
             }
             for result in results
         ],
     }
+
+
+def matched_terms_for_log(result: Any, query_terms: list[str]) -> list[str]:
+    terms = list(getattr(result, "matched_terms", []) or [])
+    if terms:
+        return terms[:REQUEST_LOG_MATCHED_TERM_LIMIT]
+    return matched_query_terms(result, query_terms)
+
+
+def matched_fields_for_log(result: Any, query_terms: list[str]) -> list[str]:
+    fields = list(getattr(result, "matched_fields", []) or [])
+    if fields:
+        return fields
+
+    matched_fields: list[str] = []
+    field_values = {
+        "标题": result.title,
+        "正文": result.content,
+        "外部ID": result.external_id,
+        "元数据": json.dumps(result.metadata or {}, ensure_ascii=False, sort_keys=True),
+    }
+    attachment_parts: list[str] = []
+    for attachment in getattr(result, "attachments", []):
+        attachment_parts.extend([attachment.filename, attachment.description, attachment.ocr_text])
+    field_values["附件"] = " ".join(str(part or "") for part in attachment_parts)
+
+    for field_name, value in field_values.items():
+        normalized_value = normalize_query(str(value or ""))
+        if any(normalize_query(term) in normalized_value for term in query_terms):
+            matched_fields.append(field_name)
+    return matched_fields
 
 
 def matched_query_terms(result: Any, query_terms: list[str]) -> list[str]:

@@ -44,7 +44,15 @@ class SearchResult:
     score: float
     score_parts: dict[str, float]
     embedding_status: str
+    matched_terms: list[str] = field(default_factory=list)
+    matched_fields: list[str] = field(default_factory=list)
     attachments: list[SearchAttachment] = field(default_factory=list)
+
+
+MIN_SEARCH_SCORE = 0.12
+HIGH_FREQUENCY_ABSOLUTE_MATCHES = 8
+HIGH_FREQUENCY_RATIO = 0.30
+HIGH_FREQUENCY_MIN_MATCHES = 3
 
 
 def utcnow() -> datetime:
@@ -169,13 +177,83 @@ def search_memories(
         "like_query": f"%{normalized_query}%",
         "top_k": payload.top_k,
         "candidate_limit": max(payload.top_k * 8, 50),
+        "min_matched_terms": 1 if len(query_terms) == 1 else 2,
+        "min_score": MIN_SEARCH_SCORE,
     }
     where_sql = _build_common_where(payload, params)
     sql = _text_search_sql(where_sql)
     rows = db.execute(text(sql), params).mappings().all()
     results = [_row_to_result(row) for row in rows]
+    results = [result for result in results if result.matched_terms and result.score >= MIN_SEARCH_SCORE]
     attachments_by_memory = _attachments_for_memories(db, [result.memory_id for result in results])
     return [replace(result, attachments=attachments_by_memory.get(result.memory_id, [])) for result in results]
+
+
+def filter_high_frequency_terms(
+    db: Session,
+    user_id: uuid.UUID,
+    agent_id: str,
+    query_terms: list[str],
+) -> tuple[list[str], list[str]]:
+    if not query_terms:
+        return [], []
+
+    rows = db.execute(
+        text(
+            """
+WITH query_terms AS (
+    SELECT term
+    FROM unnest(CAST(:terms AS text[])) AS query_term(term)
+    WHERE length(term) > 0
+),
+total AS (
+    SELECT count(*)::float AS total_count
+    FROM memories
+    WHERE user_id = :user_id
+      AND agent_id = :agent_id
+      AND deleted_at IS NULL
+),
+term_counts AS (
+    SELECT
+        qt.term,
+        count(m.id)::int AS match_count,
+        total.total_count
+    FROM query_terms qt
+    CROSS JOIN total
+    LEFT JOIN memories m
+      ON m.user_id = :user_id
+     AND m.agent_id = :agent_id
+     AND m.deleted_at IS NULL
+     AND (
+        m.search_text ILIKE ('%' || qt.term || '%')
+        OR m."metadata"::text ILIKE ('%' || qt.term || '%')
+     )
+    GROUP BY qt.term, total.total_count
+)
+SELECT term, match_count, total_count
+FROM term_counts
+"""
+        ),
+        {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "terms": query_terms,
+        },
+    ).mappings().all()
+
+    high_frequency_terms: set[str] = set()
+    for row in rows:
+        match_count = int(row["match_count"] or 0)
+        total_count = float(row["total_count"] or 0.0)
+        ratio = (match_count / total_count) if total_count else 0.0
+        if match_count >= HIGH_FREQUENCY_ABSOLUTE_MATCHES or (
+            match_count >= HIGH_FREQUENCY_MIN_MATCHES and ratio >= HIGH_FREQUENCY_RATIO
+        ):
+            high_frequency_terms.add(row["term"])
+
+    effective_terms = [term for term in query_terms if term not in high_frequency_terms]
+    ignored_terms = [f"{term}:高频弱词" for term in query_terms if term in high_frequency_terms]
+    return effective_terms, ignored_terms
 
 
 def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) -> str:
@@ -206,6 +284,41 @@ WITH query_terms AS (
 term_stats AS (
     SELECT GREATEST(count(*), 1)::float AS term_count FROM query_terms
 ),
+term_matches AS (
+    SELECT
+        m.id,
+        COALESCE(
+            array_agg(DISTINCT qt.term ORDER BY qt.term) FILTER (
+                WHERE m.search_text ILIKE ('%' || qt.term || '%')
+                   OR m."metadata"::text ILIKE ('%' || qt.term || '%')
+            ),
+            ARRAY[]::text[]
+        ) AS matched_terms,
+        count(DISTINCT qt.term) FILTER (
+            WHERE m.search_text ILIKE ('%' || qt.term || '%')
+               OR m."metadata"::text ILIKE ('%' || qt.term || '%')
+        )::float AS matched_term_count,
+        count(DISTINCT qt.term) FILTER (
+            WHERE m.title ILIKE ('%' || qt.term || '%')
+        )::float AS title_term_matches,
+        count(DISTINCT qt.term) FILTER (
+            WHERE m.content ILIKE ('%' || qt.term || '%')
+        )::float AS content_term_matches,
+        count(DISTINCT qt.term) FILTER (
+            WHERE m."metadata"::text ILIKE ('%' || qt.term || '%')
+        )::float AS metadata_term_matches,
+        count(DISTINCT qt.term) FILTER (
+            WHERE m.search_text ILIKE ('%' || qt.term || '%')
+              AND NOT (
+                m.title ILIKE ('%' || qt.term || '%')
+                OR m.content ILIKE ('%' || qt.term || '%')
+              )
+        )::float AS attachment_term_matches
+    FROM memories m
+    CROSS JOIN query_terms qt
+    WHERE {where_sql}
+    GROUP BY m.id
+),
 text_candidates AS (
     SELECT
         m.id,
@@ -215,46 +328,38 @@ text_candidates AS (
             COALESCE(similarity(m.title, :query), 0.0)
         ) AS fuzzy_score,
         CASE
-            WHEN m.search_text ILIKE :like_query OR m.title ILIKE :like_query THEN 1.0
+            WHEN m.search_text ILIKE :like_query OR m.title ILIKE :like_query OR m."metadata"::text ILIKE :like_query THEN 1.0
             ELSE 0.0
         END AS exact_score,
         GREATEST(
+            tm.title_term_matches / NULLIF(ts.term_count, 0.0),
             CASE WHEN m.title ILIKE :like_query THEN 1.0 ELSE 0.0 END,
-            COALESCE(similarity(m.title, :query), 0.0)
+            COALESCE(similarity(m.title, :query), 0.0) * 0.5
         ) AS title_score,
-        COALESCE(
-            (
-                SELECT count(*)::float
-                FROM query_terms qt
-                WHERE m.search_text ILIKE ('%' || qt.term || '%')
-                   OR m."metadata"::text ILIKE ('%' || qt.term || '%')
-            ) / NULLIF(ts.term_count, 0.0),
-            0.0
-        ) AS term_score,
-        CASE WHEN m."metadata"::text ILIKE :like_query THEN 1.0 ELSE 0.0 END AS metadata_score,
+        COALESCE(tm.matched_term_count / NULLIF(ts.term_count, 0.0), 0.0) AS term_score,
+        COALESCE(tm.content_term_matches / NULLIF(ts.term_count, 0.0), 0.0) AS content_score,
+        GREATEST(
+            COALESCE(tm.metadata_term_matches / NULLIF(ts.term_count, 0.0), 0.0),
+            CASE WHEN m."metadata"::text ILIKE :like_query THEN 1.0 ELSE 0.0 END
+        ) AS metadata_score,
         CASE
             WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '30 days' THEN 1.0
             WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '180 days' THEN 0.5
             WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '365 days' THEN 0.25
             ELSE 0.0
-        END AS recency_score
+        END AS recency_score,
+        tm.matched_terms,
+        ARRAY_REMOVE(ARRAY[
+            CASE WHEN tm.title_term_matches > 0 THEN '标题'::text END,
+            CASE WHEN tm.content_term_matches > 0 THEN '正文'::text END,
+            CASE WHEN tm.metadata_term_matches > 0 THEN '元数据'::text END,
+            CASE WHEN tm.attachment_term_matches > 0 THEN '附件'::text END
+        ], NULL) AS matched_fields
     FROM memories m
     CROSS JOIN term_stats ts
+    JOIN term_matches tm ON tm.id = m.id
     WHERE {where_sql}
-      AND (
-        to_tsvector('simple', m.search_text) @@ plainto_tsquery('simple', :query)
-        OR m.search_text % :query
-        OR m.title % :query
-        OR m.search_text ILIKE :like_query
-        OR m.title ILIKE :like_query
-        OR m."metadata"::text ILIKE :like_query
-        OR EXISTS (
-            SELECT 1
-            FROM query_terms qt
-            WHERE m.search_text ILIKE ('%' || qt.term || '%')
-               OR m."metadata"::text ILIKE ('%' || qt.term || '%')
-        )
-      )
+      AND tm.matched_term_count >= :min_matched_terms
     ORDER BY keyword_score DESC, title_score DESC, term_score DESC, fuzzy_score DESC, m.updated_at DESC
     LIMIT :candidate_limit
 ),
@@ -274,24 +379,33 @@ scored AS (
         COALESCE(tc.exact_score, 0.0) AS exact_score,
         COALESCE(tc.title_score, 0.0) AS title_score,
         COALESCE(tc.term_score, 0.0) AS term_score,
+        COALESCE(tc.content_score, 0.0) AS content_score,
         COALESCE(tc.metadata_score, 0.0) AS metadata_score,
-        COALESCE(tc.recency_score, 0.0) AS recency_score
+        COALESCE(tc.recency_score, 0.0) AS recency_score,
+        tc.matched_terms,
+        tc.matched_fields
     FROM memories m
     JOIN text_candidates tc ON tc.id = m.id
-)
-SELECT
+),
+weighted AS (
+    SELECT
     *,
     LEAST(
         1.0,
-        0.30 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
-        + 0.20 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
-        + 0.20 * LEAST(GREATEST(term_score, 0.0), 1.0)
-        + 0.15 * LEAST(GREATEST(title_score, 0.0), 1.0)
-        + 0.10 * LEAST(GREATEST(exact_score, 0.0), 1.0)
-        + 0.03 * LEAST(GREATEST(metadata_score, 0.0), 1.0)
+        0.24 * LEAST(GREATEST(title_score, 0.0), 1.0)
+        + 0.24 * LEAST(GREATEST(term_score, 0.0), 1.0)
+        + 0.18 * LEAST(GREATEST(content_score, 0.0), 1.0)
+        + 0.16 * LEAST(GREATEST(metadata_score, 0.0), 1.0)
+        + 0.08 * LEAST(GREATEST(exact_score, 0.0), 1.0)
+        + 0.05 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
+        + 0.03 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
         + 0.02 * LEAST(GREATEST(recency_score, 0.0), 1.0)
     ) AS score
-FROM scored
+    FROM scored
+)
+SELECT *
+FROM weighted
+WHERE score >= :min_score
 ORDER BY score DESC, updated_at DESC
 LIMIT :top_k
 """
@@ -311,8 +425,16 @@ def _row_to_result(row: Any) -> SearchResult:
             "semantic": 0.0,
             "keyword": float(row["keyword_score"] or 0.0),
             "fuzzy": float(row["fuzzy_score"] or 0.0),
+            "term": float(row["term_score"] or 0.0),
+            "title": float(row["title_score"] or 0.0),
+            "content": float(row["content_score"] or 0.0),
+            "metadata": float(row["metadata_score"] or 0.0),
+            "exact": float(row["exact_score"] or 0.0),
+            "recency": float(row["recency_score"] or 0.0),
         },
         embedding_status="disabled",
+        matched_terms=list(row["matched_terms"] or []),
+        matched_fields=list(row["matched_fields"] or []),
         attachments=[],
     )
 

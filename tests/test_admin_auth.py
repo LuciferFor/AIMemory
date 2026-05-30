@@ -347,10 +347,11 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "请求参数" in response.text
     assert "top_k 8" in response.text
     assert "max_chars 3000" in response.text
-    assert "拆分关键词" in response.text
+    assert "有效关键词" in response.text
     assert "忽略关键词" in response.text
     assert "lucifer" in response.text
     assert "命中关键词" in response.text
+    assert "命中字段" in response.text
     assert "回复偏好" in response.text
     assert "pref-short-replies" in response.text
     assert "用户喜欢短一点、自然一点的回答。" in response.text

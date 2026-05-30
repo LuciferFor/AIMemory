@@ -67,9 +67,15 @@ class MemorySearchRequest(BaseModel):
 
 
 class ScoreParts(BaseModel):
-    semantic: float
-    keyword: float
-    fuzzy: float
+    semantic: float = 0.0
+    keyword: float = 0.0
+    fuzzy: float = 0.0
+    term: float = 0.0
+    title: float = 0.0
+    content: float = 0.0
+    metadata: float = 0.0
+    exact: float = 0.0
+    recency: float = 0.0
 
 
 class MemorySearchItem(BaseModel):
