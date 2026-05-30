@@ -164,7 +164,7 @@ def test_context_ignores_numeric_and_user_stopwords(monkeypatch) -> None:
     assert response.json()["items"] == []
     summary = records[0]["response_summary"]
     assert summary["query_terms"] == []
-    assert summary["ignored_terms"] == ["05", "2026", "30", "lucifer", "skill"]
+    assert summary["ignored_terms"] == ["2026:数字", "05:数字", "30:数字", "lucifer:停用词", "skill:停用词"]
     assert summary["result_count"] == 0
 
 
@@ -173,9 +173,9 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
     calls = []
     result = SearchResult(
         memory_id=uuid4(),
-        external_id="openclaw-lucifer-key-migration-20260530",
-        title="OpenClaw AIMemory key migrated to lucifer user",
-        content="OpenClaw now uses a new AIMemory API key owned by the lucifer user.",
+        external_id="apple-preference",
+        title="苹果偏好",
+        content="用户喜欢苹果。",
         metadata={},
         created_at=now,
         updated_at=now,
@@ -189,18 +189,18 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
         return [result]
 
     client = _client_with_user(monkeypatch)
-    monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: {"aimemory", "lucifer", "openclaw"})
+    monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: {"lucifer"})
     monkeypatch.setattr(routes, "search_memories", _fake_search)
 
     response = client.post(
         "/v1/memories/context",
-        json={"agent_id": "assistant", "query": "OpenClaw AIMemory lucifer key"},
+        json={"agent_id": "assistant", "query": "OpenClaw AIMemory lucifer 苹果"},
     )
 
     assert response.status_code == 200
     assert len(calls) == 1
-    assert calls[0][3] == "key"
-    assert calls[0][4] == ["key"]
+    assert calls[0][3] == "苹果"
+    assert calls[0][4] == ["苹果"]
 
 
 def test_search_returns_attachment_metadata(monkeypatch) -> None:
@@ -231,7 +231,7 @@ def test_search_returns_attachment_metadata(monkeypatch) -> None:
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
-    response = client.post("/v1/memories/search", json={"agent_id": "assistant", "query": "桥"})
+    response = client.post("/v1/memories/search", json={"agent_id": "assistant", "query": "图片"})
 
     assert response.status_code == 200
     attachment = response.json()["items"][0]["attachments"][0]
@@ -267,7 +267,7 @@ def test_context_includes_attachment_description_without_base64(monkeypatch) -> 
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "桥"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "图片"})
 
     assert response.status_code == 200
     context_text = response.json()["context_text"]
@@ -365,8 +365,8 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
     assert results == []
     assert used_vector is False
     assert duration_ms >= 0
-    assert query_terms == ["回复", "自然"]
+    assert query_terms == ["自然", "回复"]
     assert ignored_terms == []
     assert len(calls[0]) == 5
-    assert calls[0][3] == "回复 自然"
-    assert calls[0][4] == ["回复", "自然"]
+    assert calls[0][3] == "自然 回复"
+    assert calls[0][4] == ["自然", "回复"]

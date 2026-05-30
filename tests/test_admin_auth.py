@@ -149,7 +149,7 @@ class _RequestLogDb(_FakeDb):
                     "top_k": 8,
                     "max_chars": 3000,
                     "query_terms": ["回答", "偏好"],
-                    "ignored_terms": ["lucifer", "skill"],
+                    "ignored_terms": ["lucifer:停用词", "skill:停用词"],
                     "result_count": 1,
                     "context_chars": 128,
                     "truncated": False,

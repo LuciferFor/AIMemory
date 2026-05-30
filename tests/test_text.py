@@ -9,10 +9,10 @@ def test_normalize_query_collapses_space_and_width() -> None:
 def test_split_query_terms_handles_english_and_cjk() -> None:
     terms = split_query_terms("AI 喜欢短回答 memory")
 
-    assert "ai" in terms
+    assert "ai" not in terms
     assert "memory" in terms
-    assert "喜欢短回答" in terms
     assert "喜欢" in terms
+    assert "短" not in terms
     assert "回答" in terms
 
 
@@ -22,23 +22,37 @@ def test_split_query_terms_ignores_pure_numbers() -> None:
     assert "2026" not in terms
     assert "05" not in terms
     assert "30" not in terms
-    assert "gpt4" in terms
-    assert "key" in terms
+    assert "gpt4" not in terms
+    assert "key" not in terms
     assert is_numeric_term("２０２６") is True
 
 
 def test_filter_query_terms_uses_stopwords() -> None:
-    terms, ignored = filter_query_terms("2026-05-30 lucifer skill OpenClaw key", {"lucifer", "skill", "openclaw"})
+    terms, ignored = filter_query_terms("2026 lucifer apple skill", {"lucifer", "skill"})
 
-    assert terms == ["key"]
-    assert ignored == ["05", "2026", "30", "lucifer", "openclaw", "skill"]
+    assert terms == ["apple"]
+    assert ignored == ["2026:数字", "lucifer:停用词", "skill:停用词"]
 
 
 def test_filter_query_terms_can_return_no_effective_terms() -> None:
     terms, ignored = filter_query_terms("2026 lucifer skill", {"lucifer", "skill"})
 
     assert terms == []
-    assert ignored == ["2026", "lucifer", "skill"]
+    assert ignored == ["2026:数字", "lucifer:停用词", "skill:停用词"]
+
+
+def test_filter_query_terms_records_quality_reasons() -> None:
+    terms, ignored = filter_query_terms("AI QQ go int string api json token gpt4 OpenClaw 你 苹果", set())
+
+    assert terms == ["苹果"]
+    assert "ai:短英文" in ignored
+    assert "qq:短英文" in ignored
+    assert "go:短英文" in ignored
+    assert "int:技术词" in ignored
+    assert "string:技术词" in ignored
+    assert "gpt4:英文数字混合" in ignored
+    assert "openclaw:非英文词典" in ignored
+    assert "你:中文单字" in ignored
 
 
 def test_weighted_score_caps_score_parts() -> None:
