@@ -15,6 +15,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   timeoutMs: 3000,
   saveOnExplicitRemember: true,
   saveBeforeCompaction: true,
+  includePromptInMemoryQuery: false,
+  includeUnstructuredTranscriptForCompaction: false,
   logging: true,
 });
 
@@ -140,6 +142,9 @@ export function resolveConfig(pluginConfig = {}, options = {}) {
     enabled: merged.enabled !== false,
     saveOnExplicitRemember: merged.saveOnExplicitRemember !== false,
     saveBeforeCompaction: merged.saveBeforeCompaction !== false,
+    includePromptInMemoryQuery: merged.includePromptInMemoryQuery === true,
+    includeUnstructuredTranscriptForCompaction:
+      merged.includeUnstructuredTranscriptForCompaction === true,
     logging: merged.logging !== false,
   };
 }
@@ -202,6 +207,97 @@ export function extractInboundText(event = {}) {
   );
 }
 
+function normalizeRole(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^role:/, "");
+}
+
+function messageRole(message = {}) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  return normalizeRole(
+    message.role ||
+      message.author?.role ||
+      message.sender?.role ||
+      message.from?.role ||
+      message.type ||
+      message.kind ||
+      "",
+  );
+}
+
+function isConversationRole(role) {
+  return ["user", "human", "assistant", "ai"].includes(normalizeRole(role));
+}
+
+function roleLabel(role) {
+  return ["assistant", "ai"].includes(normalizeRole(role)) ? "assistant" : "user";
+}
+
+function collectConversationMessages(event = {}) {
+  const sources = [event.messages, event.history, event.sessionMessages, event.conversation];
+  const messages = [];
+  for (const source of sources) {
+    if (Array.isArray(source)) {
+      messages.push(...source);
+    }
+  }
+  return messages;
+}
+
+function addUnique(parts, seen, value) {
+  const text = extractText(value).trim();
+  if (!text || seen.has(text)) {
+    return;
+  }
+  parts.push(text);
+  seen.add(text);
+}
+
+export function extractCurrentUserInputText(event = {}) {
+  const parts = [];
+  const seen = new Set();
+  for (const value of [
+    event.userInput,
+    event.input,
+    event.content,
+    event.text,
+    event.body,
+    event.inbound,
+  ]) {
+    addUnique(parts, seen, value);
+  }
+  return parts.join("\n").trim();
+}
+
+export function buildCleanMemoryQueryFromTurn(event = {}, ctx = {}, maxChars = 1500, options = {}) {
+  const parts = [];
+  const seen = new Set();
+
+  if (options.includePrompt === true) {
+    addUnique(parts, seen, extractPromptText(event));
+  }
+
+  addUnique(parts, seen, extractCurrentUserInputText(event));
+
+  if (event.message && typeof event.message === "object" && isConversationRole(messageRole(event.message))) {
+    addUnique(parts, seen, event.message);
+  }
+
+  const messages = collectConversationMessages(event).slice(-4);
+  for (const message of messages) {
+    const role = messageRole(message);
+    if (!isConversationRole(role)) {
+      continue;
+    }
+    addUnique(parts, seen, message);
+  }
+  return parts.join("\n").slice(-maxChars).trim();
+}
+
 export function buildQueryFromTurn(event = {}, maxChars = 1500) {
   const parts = [];
   const prompt = extractPromptText(event);
@@ -216,6 +312,34 @@ export function buildQueryFromTurn(event = {}, maxChars = 1500) {
     }
   }
   return parts.join("\n").slice(-maxChars).trim();
+}
+
+export function buildCleanCompactionTranscript(event = {}, maxChars = 12000, options = {}) {
+  const lines = [];
+  const seen = new Set();
+  for (const message of collectConversationMessages(event)) {
+    const role = messageRole(message);
+    if (!isConversationRole(role)) {
+      continue;
+    }
+    const text = extractText(message).trim();
+    if (!text || seen.has(`${role}:${text}`)) {
+      continue;
+    }
+    lines.push(`${roleLabel(role)}: ${text}`);
+    seen.add(`${role}:${text}`);
+  }
+
+  if (!lines.length && options.includeUnstructuredTranscript === true) {
+    for (const value of [event.transcript, event.summary]) {
+      const text = extractText(value).trim();
+      if (text) {
+        lines.push(text);
+      }
+    }
+  }
+
+  return lines.join("\n").slice(-maxChars).trim();
 }
 
 export function buildTranscriptText(event = {}, maxChars = 12000) {

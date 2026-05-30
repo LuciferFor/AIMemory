@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   buildCategorySelectionMessages,
+  buildCleanCompactionTranscript,
+  buildCleanMemoryQueryFromTurn,
   buildQueryFromTurn,
   containsForbiddenMemoryText,
   fetchCategories,
@@ -34,6 +36,8 @@ test("env/config merge prefers AIMEMORY env values", () => {
   assert.equal(config.apiKey, "aim_test");
   assert.equal(config.agentId, "env-agent");
   assert.equal(config.topK, 50);
+  assert.equal(config.includePromptInMemoryQuery, false);
+  assert.equal(config.includeUnstructuredTranscriptForCompaction, false);
 });
 
 test("parseEnvText handles quotes and comments", () => {
@@ -64,6 +68,64 @@ test("buildQueryFromTurn uses prompt and recent messages", () => {
 
   assert.match(query, /当前问题/);
   assert.match(query, /旧消息/);
+});
+
+test("clean query excludes static prompt and system messages", () => {
+  const query = buildCleanMemoryQueryFromTurn({
+    prompt: "IDENTITY.md 永久人设\nSOUL.md 灵魂设定",
+    userInput: "用户正在问苹果偏好",
+    messages: [
+      { role: "system", content: "MEMORY.md 永久记忆" },
+      { role: "developer", content: "不要发送给 AIMemory" },
+      { role: "user", content: "我喜欢香蕉" },
+      { role: "assistant", content: "我记得了" },
+    ],
+  });
+
+  assert.match(query, /用户正在问苹果偏好/);
+  assert.match(query, /我喜欢香蕉/);
+  assert.match(query, /我记得了/);
+  assert.doesNotMatch(query, /IDENTITY\.md/);
+  assert.doesNotMatch(query, /SOUL\.md/);
+  assert.doesNotMatch(query, /MEMORY\.md/);
+  assert.doesNotMatch(query, /不要发送给 AIMemory/);
+});
+
+test("clean query skips prompt-only turns unless compatibility flag is enabled", () => {
+  const event = { prompt: "IDENTITY.md 永久人设" };
+
+  assert.equal(buildCleanMemoryQueryFromTurn(event), "");
+  assert.match(
+    buildCleanMemoryQueryFromTurn(event, {}, 1500, { includePrompt: true }),
+    /IDENTITY\.md/,
+  );
+});
+
+test("clean compaction transcript uses only structured dialogue by default", () => {
+  const transcript = buildCleanCompactionTranscript({
+    prompt: "IDENTITY.md 永久人设",
+    transcript: "SOUL.md 灵魂设定",
+    messages: [
+      { role: "system", content: "MEMORY.md 永久记忆" },
+      { role: "user", content: "我喜欢苹果" },
+      { role: "assistant", content: "好的" },
+    ],
+  });
+
+  assert.match(transcript, /user: 我喜欢苹果/);
+  assert.match(transcript, /assistant: 好的/);
+  assert.doesNotMatch(transcript, /IDENTITY\.md/);
+  assert.doesNotMatch(transcript, /SOUL\.md/);
+  assert.doesNotMatch(transcript, /MEMORY\.md/);
+  assert.equal(buildCleanCompactionTranscript({ transcript: "只有纯 transcript" }), "");
+  assert.match(
+    buildCleanCompactionTranscript(
+      { transcript: "只有纯 transcript" },
+      12000,
+      { includeUnstructuredTranscript: true },
+    ),
+    /只有纯 transcript/,
+  );
 });
 
 test("fetchMemoryContext returns context text and items", async () => {
@@ -144,13 +206,52 @@ test("runtime context failure does not block prompt build", async () => {
     processEnv: {},
   });
 
-  const result = await handlers.before_prompt_build({ prompt: "hello", chatType: "direct" }, {});
+  const result = await handlers.before_prompt_build({ userInput: "hello", chatType: "direct" }, {});
 
   assert.deepEqual(result, {});
 });
 
+test("runtime skips prompt-only turns without calling AIMemory", async () => {
+  const handlers = {};
+  let fetchCalls = 0;
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return new Response("{}", { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  const result = await handlers.before_prompt_build({
+    prompt: "IDENTITY.md 永久人设",
+    chatType: "direct",
+  }, {});
+
+  assert.deepEqual(result, {});
+  assert.equal(fetchCalls, 0);
+});
+
 test("runtime context success injects prependContext", async () => {
   const handlers = {};
+  const llmMessages = [];
+  const contextBodies = [];
   const api = {
     on(name, handler) {
       handlers[name] = handler;
@@ -162,17 +263,19 @@ test("runtime context success injects prependContext", async () => {
         },
       },
       llm: {
-        async complete() {
+        async complete(payload) {
+          llmMessages.push(payload.messages);
           return '{"category":"回答偏好"}';
         },
       },
     },
   };
   registerAIMemoryRuntime(api, {
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(JSON.stringify({ items: [{ name: "回答偏好" }] }), { status: 200 });
       }
+      contextBodies.push(JSON.parse(request.body));
       return new Response(JSON.stringify({ context_text: "记忆上下文", items: [{ title: "x" }] }), {
         status: 200,
       });
@@ -185,9 +288,56 @@ test("runtime context success injects prependContext", async () => {
     processEnv: {},
   });
 
-  const result = await handlers.before_prompt_build({ prompt: "hello", chatType: "direct" }, {});
+  const result = await handlers.before_prompt_build(
+    { prompt: "IDENTITY.md 永久人设", userInput: "hello", chatType: "direct" },
+    {},
+  );
 
   assert.equal(result.prependContext, "记忆上下文");
+  assert.doesNotMatch(JSON.stringify(llmMessages), /IDENTITY\.md/);
+  assert.equal(contextBodies[0].query, "hello");
+});
+
+test("runtime compaction skips unstructured prompt and transcript", async () => {
+  const handlers = {};
+  let fetchCalls = 0;
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          throw new Error("llm should not be called");
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return new Response("{}", { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  const result = await handlers.before_compaction(
+    { prompt: "IDENTITY.md 永久人设", transcript: "SOUL.md 灵魂设定", chatType: "direct" },
+    {},
+  );
+
+  assert.deepEqual(result, {});
+  assert.equal(fetchCalls, 0);
 });
 
 test("explicit remember intent is detected", () => {

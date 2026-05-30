@@ -1,8 +1,8 @@
 import {
   buildExtractionMessages,
   buildCategorySelectionMessages,
-  buildQueryFromTurn,
-  buildTranscriptText,
+  buildCleanCompactionTranscript,
+  buildCleanMemoryQueryFromTurn,
   extractInboundText,
   extractTextFromLlmResult,
   fetchMemoryContext,
@@ -119,7 +119,9 @@ export function registerAIMemoryRuntime(api, options = {}) {
       if (!isAllowedTurn(event, ctx, config)) {
         return {};
       }
-      const query = buildQueryFromTurn(event);
+      const query = buildCleanMemoryQueryFromTurn(event, ctx, 1500, {
+        includePrompt: config.includePromptInMemoryQuery,
+      });
       if (!query) {
         return {};
       }
@@ -186,7 +188,9 @@ export function registerAIMemoryRuntime(api, options = {}) {
       if (!config.saveBeforeCompaction || !isAllowedTurn(event, ctx, config)) {
         return {};
       }
-      const transcript = buildTranscriptText(event);
+      const transcript = buildCleanCompactionTranscript(event, 12000, {
+        includeUnstructuredTranscript: config.includeUnstructuredTranscriptForCompaction,
+      });
       if (!transcript) {
         return {};
       }

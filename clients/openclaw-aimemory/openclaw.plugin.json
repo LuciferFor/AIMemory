@@ -70,6 +70,14 @@
         "type": "boolean",
         "default": true
       },
+      "includePromptInMemoryQuery": {
+        "type": "boolean",
+        "default": false
+      },
+      "includeUnstructuredTranscriptForCompaction": {
+        "type": "boolean",
+        "default": false
+      },
       "logging": {
         "type": "boolean",
         "default": true

@@ -68,6 +68,8 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
             "timeoutMs": args.timeout_ms,
             "saveOnExplicitRemember": True,
             "saveBeforeCompaction": True,
+            "includePromptInMemoryQuery": False,
+            "includeUnstructuredTranscriptForCompaction": False,
             "logging": True,
         }
     )
