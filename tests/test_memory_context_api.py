@@ -172,6 +172,10 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     assert "偏好" in summary["query_terms"]
     assert summary["result_count"] == 1
     assert summary["context_chars"] == len(response.json()["context_text"])
+    assert summary["context_text_preview"].startswith("以下是与当前请求可能相关的长期记忆")
+    assert "\n\n[长期记忆]" in summary["context_text_preview"]
+    assert "\n\n1. 回复偏好：简短自然\n" in summary["context_text_preview"]
+    assert summary["context_text_preview_truncated"] is True
     assert summary["items"][0]["external_id"] == "pref-short-replies"
     assert summary["items"][0]["title"] == "回复偏好：简短自然"
     assert "回答" in summary["items"][0]["matched_terms"]

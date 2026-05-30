@@ -151,6 +151,19 @@
                   {% endfor %}
                 </span>
               </div>
+              {% if summary.get("context_text_preview") is not none %}
+              <div class="summary-context-preview">
+                <span class="summary-label">实际返回</span>
+                {% if summary.get("context_text_preview") %}
+                <pre>{{ summary.get("context_text_preview") }}</pre>
+                {% else %}
+                <span class="muted">空，本次没有给客户端附加记忆上下文。</span>
+                {% endif %}
+                {% if summary.get("context_text_preview_truncated") %}
+                <span class="muted">这里只记录前 {{ summary.get("context_text_preview")|length }} 字预览。</span>
+                {% endif %}
+              </div>
+              {% endif %}
             </div>
             {% if summary["items"] %}
             <div class="summary-memory-list">

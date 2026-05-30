@@ -50,7 +50,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-2148"
+ADMIN_ASSET_VERSION = "20260530-2205"
 
 STATUS_LABELS = {
     "active": "启用",

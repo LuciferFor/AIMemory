@@ -822,6 +822,26 @@ th {
   flex-wrap: wrap;
 }
 
+.summary-context-preview {
+  display: grid !important;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 10px;
+  width: 100%;
+}
+
+.summary-context-preview pre {
+  margin: 0;
+  max-height: 220px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.summary-context-preview .muted {
+  grid-column: 2;
+  font-size: 12px;
+}
+
 .summary-label {
   min-width: 72px;
   color: var(--muted);

@@ -55,6 +55,7 @@ REQUEST_LOG_QUERY_PREVIEW_CHARS = 200
 REQUEST_LOG_QUERY_TERM_LIMIT = 24
 REQUEST_LOG_MATCHED_TERM_LIMIT = 12
 REQUEST_LOG_CONTENT_PREVIEW_CHARS = 80
+REQUEST_LOG_CONTEXT_PREVIEW_CHARS = 300
 
 CONTEXT_USAGE_HINT: dict[str, Any] = {
     "recommended_position": "system_or_developer_context",
@@ -418,6 +419,8 @@ def build_context_response_summary(
         "result_count": len(results),
         "context_chars": len(context_text),
         "truncated": bool(context_text) and len(context_text) >= max_chars,
+        "context_text_preview": preview_multiline_text(context_text, REQUEST_LOG_CONTEXT_PREVIEW_CHARS),
+        "context_text_preview_truncated": len(str(context_text or "").strip()) > REQUEST_LOG_CONTEXT_PREVIEW_CHARS,
         "items": [
             {
                 "memory_id": str(result.memory_id),
@@ -509,6 +512,11 @@ def matched_query_terms(result: Any, query_terms: list[str]) -> list[str]:
 
 def preview_text(value: object, max_chars: int) -> str:
     text = " ".join(str(value or "").split())
+    return text if len(text) <= max_chars else text[:max_chars].rstrip()
+
+
+def preview_multiline_text(value: object, max_chars: int) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     return text if len(text) <= max_chars else text[:max_chars].rstrip()
 
 

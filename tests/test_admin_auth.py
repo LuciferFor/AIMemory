@@ -173,6 +173,8 @@ class _RequestLogDb(_FakeDb):
                     "result_count": 1,
                     "context_chars": 128,
                     "truncated": False,
+                    "context_text_preview": "以下是与当前请求可能相关的长期记忆。\n\n[长期记忆]\n\n1. 回复偏好\n用户喜欢短一点、自然一点的回答。",
+                    "context_text_preview_truncated": False,
                     "items": [
                         {
                             "memory_id": str(uuid.uuid4()),
@@ -431,6 +433,8 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "有效关键词" in response.text
     assert "忽略关键词" in response.text
     assert "lucifer" in response.text
+    assert "实际返回" in response.text
+    assert "[长期记忆]" in response.text
     assert "命中关键词" in response.text
     assert "命中字段" in response.text
     assert "回复偏好" in response.text
