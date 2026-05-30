@@ -87,6 +87,57 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     assert body["items"][0]["embedding_status"] == "disabled"
 
 
+def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    records = []
+    now = datetime.now(UTC)
+    long_content = "用户喜欢短一点、自然一点的回答。" * 20
+    result = SearchResult(
+        memory_id=uuid4(),
+        external_id="pref-short-replies",
+        title="回复偏好：简短自然",
+        content=long_content,
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.91,
+        score_parts={"semantic": 0.0, "keyword": 0.1, "fuzzy": 0.01},
+        embedding_status="disabled",
+    )
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    get_settings.cache_clear()
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: _FakeDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "回答偏好"})
+
+    assert response.status_code == 200
+    assert len(records) == 1
+    summary = records[0]["response_summary"]
+    assert summary["type"] == "context"
+    assert summary["agent_id"] == "assistant"
+    assert summary["query"] == "回答偏好"
+    assert summary["top_k"] == 8
+    assert summary["max_chars"] == 3000
+    assert "回答" in summary["query_terms"]
+    assert "偏好" in summary["query_terms"]
+    assert summary["result_count"] == 1
+    assert summary["context_chars"] == len(response.json()["context_text"])
+    assert summary["items"][0]["external_id"] == "pref-short-replies"
+    assert summary["items"][0]["title"] == "回复偏好：简短自然"
+    assert "回答" in summary["items"][0]["matched_terms"]
+    assert "偏好" in summary["items"][0]["matched_terms"]
+    assert len(summary["items"][0]["content_preview"]) <= 80
+    rendered = str(summary)
+    assert response.json()["context_text"] not in rendered
+    assert long_content not in rendered
+
+
 def test_search_returns_attachment_metadata(monkeypatch) -> None:
     now = datetime.now(UTC)
     attachment_id = uuid4()

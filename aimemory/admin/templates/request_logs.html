@@ -97,6 +97,75 @@
         </td>
         <td><code title="{{ log.request_id }}">{{ short_middle(log.request_id, 10, 8) }}</code></td>
       </tr>
+      <tr class="request-log-detail-row">
+        <td colspan="6">
+          <details class="request-log-summary">
+            <summary>详情</summary>
+            {% if log.response_summary %}
+            {% set summary = log.response_summary %}
+            <div class="summary-head">
+              <span>类型 {{ summary["type"] }}</span>
+              <span>命中 {{ summary["result_count"] }}</span>
+              <span>上下文 {{ summary["context_chars"] }} 字</span>
+              <span>{{ "已截断" if summary["truncated"] else "未截断" }}</span>
+            </div>
+            <div class="summary-query">
+              <div>
+                <span class="summary-label">请求内容</span>
+                <strong>{{ summary.get("query") or "未记录" }}</strong>
+              </div>
+              <div>
+                <span class="summary-label">请求参数</span>
+                <span class="term-list">
+                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("top_k") %}<code class="term-chip">top_k {{ summary.get("top_k") }}</code>{% endif %}
+                  {% if summary.get("max_chars") %}<code class="term-chip">max_chars {{ summary.get("max_chars") }}</code>{% endif %}
+                  {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") %}<span class="muted">未记录</span>{% endif %}
+                </span>
+              </div>
+              <div>
+                <span class="summary-label">拆分关键词</span>
+                <span class="term-list">
+                  {% for term in summary.get("query_terms", []) %}
+                  <code class="term-chip">{{ term }}</code>
+                  {% else %}
+                  <span class="muted">无</span>
+                  {% endfor %}
+                </span>
+              </div>
+            </div>
+            {% if summary["items"] %}
+            <div class="summary-memory-list">
+              {% for item in summary["items"] %}
+              <article class="summary-memory-item">
+                <header>
+                  <strong>{{ item['title'] }}</strong>
+                  <code title="{{ item['external_id'] }}">{{ short_middle(item['external_id'], 16, 8) }}</code>
+                  <span class="muted">分数 {{ "%.3f"|format(item['score']) }}</span>
+                </header>
+                <div class="matched-terms">
+                  <span class="summary-label">命中关键词</span>
+                  <span class="term-list">
+                    {% for term in item.get("matched_terms", []) %}
+                    <code class="term-chip hit">{{ term }}</code>
+                    {% else %}
+                    <span class="muted">未记录明确关键词，可能是模糊匹配</span>
+                    {% endfor %}
+                  </span>
+                </div>
+                <p>{{ item['content_preview'] }}</p>
+              </article>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="empty">本次没有返回记忆。</p>
+            {% endif %}
+            {% else %}
+            <p class="empty">无业务摘要</p>
+            {% endif %}
+          </details>
+        </td>
+      </tr>
       {% else %}
       <tr><td colspan="6" class="empty">暂无请求日志</td></tr>
       {% endfor %}

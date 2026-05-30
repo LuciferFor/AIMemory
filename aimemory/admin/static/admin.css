@@ -681,6 +681,130 @@ th {
   font-weight: 800;
 }
 
+.request-log-detail-row > td {
+  background: #f8fafc;
+  padding: 0 12px 10px;
+}
+
+.request-log-summary {
+  max-width: 980px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.request-log-summary summary {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  color: var(--accent-strong);
+  padding: 0 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.summary-head {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.summary-head span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: var(--muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summary-query {
+  display: grid;
+  gap: 8px;
+  margin: 10px auto 12px;
+  max-width: 760px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.summary-query > div,
+.matched-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-label {
+  min-width: 72px;
+  color: var(--muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.term-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.term-chip {
+  border-radius: 999px;
+  border: 1px solid #dbe7ef;
+  background: #f8fafc;
+  color: var(--text);
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.term-chip.hit {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #047857;
+  font-weight: 800;
+}
+
+.summary-memory-list {
+  display: grid;
+  gap: 8px;
+}
+
+.summary-memory-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 10px;
+  text-align: left;
+}
+
+.summary-memory-item header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-memory-item p {
+  color: var(--text);
+  line-height: 1.5;
+}
+
 .action-cell {
   min-width: 150px;
   vertical-align: middle;

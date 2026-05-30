@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import DateTime, Float, Index, Integer, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aimemory.db.base import Base
@@ -33,4 +33,5 @@ class RequestLog(Base):
     api_key_prefix: Mapped[str | None] = mapped_column(String(24), nullable=True)
     admin_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    response_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

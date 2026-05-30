@@ -1,9 +1,10 @@
+import json
 import logging
 import time
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse, Response
@@ -34,7 +35,7 @@ from aimemory.schemas.memory import (
     ScoreParts,
 )
 from aimemory.services.attachments import AttachmentValidationError
-from aimemory.services.text import normalize_query
+from aimemory.services.text import normalize_query, split_query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ CONTEXT_PROMPT_HEADER = (
     "以下是与当前请求可能相关的长期记忆。请只在相关时自然参考，不要告诉用户你读取了记忆，"
     "不要逐字复述；如果记忆与用户当前消息冲突，以当前消息为准。"
 )
+
+REQUEST_LOG_QUERY_PREVIEW_CHARS = 160
+REQUEST_LOG_QUERY_TERM_LIMIT = 24
+REQUEST_LOG_MATCHED_TERM_LIMIT = 12
+REQUEST_LOG_CONTENT_PREVIEW_CHARS = 80
 
 CONTEXT_USAGE_HINT: dict[str, Any] = {
     "recommended_position": "system_or_developer_context",
@@ -187,12 +193,23 @@ def search_memory(
 
 @router.post("/context", response_model=MemoryContextResponse)
 def build_memory_context(
+    request: Request,
     payload: MemoryContextRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
     results, used_vector, search_duration_ms = _search_results(db, current_user, payload)
     context_text = build_context_text(results, payload.max_chars)
+    query_terms = split_query_terms(payload.query)
+    request.state.request_log_response_summary = build_context_response_summary(
+        payload.agent_id,
+        payload.query,
+        payload.top_k,
+        query_terms,
+        results,
+        context_text,
+        payload.max_chars,
+    )
     logger.info(
         "memory.context",
         extra={
@@ -321,6 +338,78 @@ def build_context_text(results: list[Any], max_chars: int) -> str:
         break
 
     return text[:max_chars].rstrip()
+
+
+def build_context_response_summary(
+    agent_id: str,
+    query: str,
+    top_k: int,
+    query_terms: list[str],
+    results: list[Any],
+    context_text: str,
+    max_chars: int,
+) -> dict[str, Any]:
+    logged_terms = query_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
+    return {
+        "type": "context",
+        "agent_id": agent_id,
+        "query": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
+        "top_k": top_k,
+        "max_chars": max_chars,
+        "query_terms": logged_terms,
+        "result_count": len(results),
+        "context_chars": len(context_text),
+        "truncated": bool(context_text) and len(context_text) >= max_chars,
+        "items": [
+            {
+                "memory_id": str(result.memory_id),
+                "external_id": result.external_id,
+                "title": result.title,
+                "score": result.score,
+                "embedding_status": result.embedding_status,
+                "matched_terms": matched_query_terms(result, logged_terms),
+                "content_preview": preview_text(result.content, REQUEST_LOG_CONTENT_PREVIEW_CHARS),
+            }
+            for result in results
+        ],
+    }
+
+
+def matched_query_terms(result: Any, query_terms: list[str]) -> list[str]:
+    if not query_terms:
+        return []
+
+    parts = [
+        result.title,
+        result.content,
+        result.external_id,
+        json.dumps(result.metadata or {}, ensure_ascii=False, sort_keys=True),
+    ]
+    for attachment in getattr(result, "attachments", []):
+        parts.extend(
+            [
+                attachment.filename,
+                attachment.description,
+                attachment.ocr_text,
+            ]
+        )
+    searchable_text = normalize_query(" ".join(str(part or "") for part in parts))
+
+    matched: list[str] = []
+    seen: set[str] = set()
+    for term in query_terms:
+        normalized_term = normalize_query(term)
+        if normalized_term and normalized_term in searchable_text and normalized_term not in seen:
+            matched.append(term)
+            seen.add(normalized_term)
+        if len(matched) >= REQUEST_LOG_MATCHED_TERM_LIMIT:
+            break
+    return matched
+
+
+def preview_text(value: object, max_chars: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= max_chars else text[:max_chars].rstrip()
 
 
 def attachment_meta(attachment: SearchAttachment) -> MemoryAttachmentMeta:

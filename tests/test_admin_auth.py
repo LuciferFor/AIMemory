@@ -140,6 +140,28 @@ class _RequestLogDb(_FakeDb):
                 api_key_prefix="aim_test",
                 admin_username=None,
                 error_type=None,
+                response_summary={
+                    "type": "context",
+                    "agent_id": "5df9cbfb-d31b-46dd-972b-05d466d2257c",
+                    "query": "回答偏好",
+                    "top_k": 8,
+                    "max_chars": 3000,
+                    "query_terms": ["回答", "偏好"],
+                    "result_count": 1,
+                    "context_chars": 128,
+                    "truncated": False,
+                    "items": [
+                        {
+                            "memory_id": str(uuid.uuid4()),
+                            "external_id": "pref-short-replies",
+                            "title": "回复偏好",
+                            "score": 0.91,
+                            "embedding_status": "disabled",
+                            "matched_terms": ["回答", "偏好"],
+                            "content_preview": "用户喜欢短一点、自然一点的回答。",
+                        }
+                    ],
+                },
                 created_at="2026-05-30 10:00:00+00:00",
             ),
             SimpleNamespace(
@@ -158,6 +180,7 @@ class _RequestLogDb(_FakeDb):
                 api_key_prefix=None,
                 admin_username="admin",
                 error_type=None,
+                response_summary=None,
                 created_at="2026-05-30 10:01:00+00:00",
             ),
         ]
@@ -280,6 +303,16 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "aim_test" in response.text
     assert "POST" in response.text
     assert "12.34ms" in response.text
+    assert "请求内容" in response.text
+    assert "回答偏好" in response.text
+    assert "请求参数" in response.text
+    assert "top_k 8" in response.text
+    assert "max_chars 3000" in response.text
+    assert "拆分关键词" in response.text
+    assert "命中关键词" in response.text
+    assert "回复偏好" in response.text
+    assert "pref-short-replies" in response.text
+    assert "用户喜欢短一点、自然一点的回答。" in response.text
     assert "Authorization" not in response.text
 
 

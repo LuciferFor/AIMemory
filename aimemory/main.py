@@ -113,6 +113,7 @@ async def _write_request_log(
         "api_key_prefix": getattr(request.state, "request_log_api_key_prefix", None),
         "admin_username": getattr(request.state, "request_log_admin_username", None),
         "error_type": _truncate(error_type, 128),
+        "response_summary": getattr(request.state, "request_log_response_summary", None),
     }
     try:
         await run_in_threadpool(insert_request_log, data)
