@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from aimemory.models.ai_chat import AiChatMessage
 from aimemory.models.llm_provider_config import LlmProviderConfig
-from aimemory.services.openai_compatible import chat_completion
+from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion
 
 MAX_HISTORY_MESSAGES = 16
 MAX_SQL_QUERIES = 3
@@ -120,6 +120,9 @@ def build_plan_messages(project_context: str, history: list[AiChatMessage]) -> l
                 "格式：{\"assistant_message\":\"先给管理员看的简短说明\","
                 "\"sql_queries\":[{\"title\":\"查询标题\",\"purpose\":\"用途\",\"sql\":\"SELECT ...\"}]}。"
                 "不需要查库时 sql_queries 返回空数组。"
+                "assistant_message 必须是非空中文文本。"
+                "即使管理员要求联网、访问网页或查询外部 URL，你也不能输出空白；"
+                "请在 assistant_message 中明确说明后台 AI 没有浏览器或外部联网访问工具。"
             ),
         }
     ]
@@ -129,6 +132,17 @@ def build_plan_messages(project_context: str, history: list[AiChatMessage]) -> l
         content = str(message.content or "")[:MAX_USER_MESSAGE_CHARS]
         messages.append({"role": message.role, "content": content})
     return messages
+
+
+def retry_message_for_empty_plan() -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            "上一轮模型返回了空白内容。请重新回答，并严格只输出 JSON 对象："
+            "{\"assistant_message\":\"非空中文说明\",\"sql_queries\":[]}。"
+            "如果管理员问能不能访问外部网站，请说明不能直接访问外部网站，不要输出空格或空字符串。"
+        ),
+    }
 
 
 def parse_plan(content: str) -> dict[str, Any]:
@@ -313,12 +327,23 @@ def generate_ai_chat_reply(
     history: list[AiChatMessage],
 ) -> dict[str, Any]:
     project_context = build_project_context(db)
-    plan_result = chat_completion(
-        config,
-        api_key,
-        build_plan_messages(project_context, history),
-        response_format={"type": "json_object"},
-    )
+    plan_messages = build_plan_messages(project_context, history)
+    try:
+        plan_result = chat_completion(
+            config,
+            api_key,
+            plan_messages,
+            response_format={"type": "json_object"},
+        )
+    except OpenAICompatibleError as exc:
+        if "内容为空" not in str(exc):
+            raise
+        plan_result = chat_completion(
+            config,
+            api_key,
+            plan_messages + [retry_message_for_empty_plan()],
+            response_format={"type": "json_object"},
+        )
     plan = parse_plan(plan_result.content)
     sql_results = execute_plan_sql(db, plan["sql_queries"])
     usage = dict(plan_result.usage)

@@ -2,7 +2,15 @@ import json
 
 import pytest
 
-from aimemory.services.ai_chat import AiChatError, clean_thread_title, make_thread_title, parse_plan, validate_readonly_sql
+from aimemory.services.ai_chat import (
+    AiChatError,
+    build_plan_messages,
+    clean_thread_title,
+    make_thread_title,
+    parse_plan,
+    retry_message_for_empty_plan,
+    validate_readonly_sql,
+)
 
 
 def test_make_thread_title_truncates_clean_text() -> None:
@@ -42,6 +50,22 @@ def test_parse_plan_accepts_json_code_fence() -> None:
 def test_parse_plan_rejects_invalid_json() -> None:
     with pytest.raises(AiChatError, match="合法 JSON"):
         parse_plan("不是 json")
+
+
+def test_plan_prompt_forbids_empty_output_for_external_url() -> None:
+    system_prompt = build_plan_messages("项目上下文", [])[0]["content"]
+
+    assert "assistant_message 必须是非空中文文本" in system_prompt
+    assert "外部 URL" in system_prompt
+    assert "不能输出空白" in system_prompt
+
+
+def test_empty_plan_retry_message_is_strict_json_instruction() -> None:
+    retry = retry_message_for_empty_plan()
+
+    assert retry["role"] == "user"
+    assert "严格只输出 JSON" in retry["content"]
+    assert "不要输出空格" in retry["content"]
 
 
 def test_validate_readonly_sql_allows_select_and_with() -> None:
