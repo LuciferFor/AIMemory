@@ -174,3 +174,26 @@ aimemory create-user <name>
 aimemory create-api-key <name> --label <label>
 aimemory revoke-api-key <key-prefix>
 ```
+
+## OpenClaw Plugin
+
+The OpenClaw automatic memory plugin lives in:
+
+```text
+clients/openclaw-aimemory
+```
+
+It is an OpenClaw native plugin that calls `/v1/memories/context` before model
+turns and injects the returned memory context. By default it runs for
+private/direct/DM sessions across all channels, while group/channel memory
+injection stays disabled for privacy.
+
+Install it on an OpenClaw machine with:
+
+```bash
+cd clients/openclaw-aimemory
+python3 install.py
+```
+
+Keep the AIMemory API key in `~/.openclaw/aimemory.env`; the installer does not
+write secrets into OpenClaw config.

@@ -1,0 +1,90 @@
+{
+  "id": "aimemory",
+  "name": "AIMemory",
+  "description": "Injects AIMemory long-term memory context into OpenClaw turns and writes durable memories before compaction.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "baseUrl": {
+        "type": "string",
+        "default": "http://192.168.31.11:10011"
+      },
+      "agentId": {
+        "type": "string",
+        "default": "5df9cbfb-d31b-46dd-972b-05d466d2257c"
+      },
+      "envFile": {
+        "type": "string",
+        "default": "~/.openclaw/aimemory.env"
+      },
+      "allowedChatTypes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "direct",
+          "private",
+          "dm"
+        ]
+      },
+      "allowedAgents": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "topK": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 8
+      },
+      "maxChars": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 12000,
+        "default": 3000
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "maximum": 600000,
+        "default": 3000
+      },
+      "saveOnExplicitRemember": {
+        "type": "boolean",
+        "default": true
+      },
+      "saveBeforeCompaction": {
+        "type": "boolean",
+        "default": true
+      },
+      "logging": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  },
+  "uiHints": {
+    "baseUrl": {
+      "label": "AIMemory base URL"
+    },
+    "agentId": {
+      "label": "AIMemory agent_id"
+    },
+    "envFile": {
+      "label": "AIMemory env file"
+    }
+  }
+}

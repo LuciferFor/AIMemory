@@ -1,0 +1,31 @@
+{
+  "name": "aimemory-openclaw",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AIMemory automatic context injection plugin for OpenClaw.",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./core": "./lib/core.mjs",
+    "./runtime": "./lib/runtime.mjs"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.20",
+      "minGatewayVersion": "2026.5.20"
+    },
+    "build": {
+      "openclawVersion": "2026.5.27",
+      "pluginSdkVersion": "2026.5.27"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}
