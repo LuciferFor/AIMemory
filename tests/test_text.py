@@ -10,10 +10,29 @@ def test_split_query_terms_handles_english_and_cjk() -> None:
     terms = split_query_terms("AI 喜欢短回答 memory")
 
     assert "ai" not in terms
-    assert "memory" in terms
+    assert "memory" not in terms
     assert "喜欢" in terms
     assert "短" not in terms
     assert "回答" in terms
+
+
+def test_split_query_terms_uses_english_phrases_not_single_words() -> None:
+    terms = split_query_terms("dark armor fantasy poster")
+
+    assert "dark" not in terms
+    assert "armor" not in terms
+    assert "fantasy" not in terms
+    assert "poster" not in terms
+    assert "dark armor" in terms
+    assert "fantasy poster" in terms
+
+
+def test_split_query_terms_skips_phrases_with_function_words() -> None:
+    terms = split_query_terms("the character holds bow")
+
+    assert "the character" not in terms
+    assert "character holds" in terms
+    assert "holds bow" in terms
 
 
 def test_split_query_terms_ignores_pure_numbers() -> None:
@@ -30,8 +49,20 @@ def test_split_query_terms_ignores_pure_numbers() -> None:
 def test_filter_query_terms_uses_stopwords() -> None:
     terms, ignored = filter_query_terms("2026 lucifer apple skill", {"lucifer", "skill"})
 
-    assert terms == ["apple"]
-    assert ignored == ["2026:数字", "lucifer:停用词", "skill:停用词"]
+    assert terms == []
+    assert ignored == ["2026:数字", "lucifer:停用词", "apple:英文单词", "skill:停用词"]
+
+
+def test_filter_query_terms_keeps_valid_english_phrase() -> None:
+    terms, ignored = filter_query_terms("api json token string dark armor", set())
+
+    assert terms == ["dark armor"]
+    assert "api:技术词" in ignored
+    assert "json:技术词" in ignored
+    assert "token:技术词" in ignored
+    assert "string:技术词" in ignored
+    assert "dark:英文单词" in ignored
+    assert "armor:英文单词" in ignored
 
 
 def test_filter_query_terms_can_return_no_effective_terms() -> None:

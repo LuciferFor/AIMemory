@@ -253,6 +253,42 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
     assert calls[0][5] == ["苹果"]
 
 
+def test_context_ignores_single_english_words(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    records = []
+    calls = []
+
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: calls.append(args) or [])
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    get_settings.cache_clear()
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: _FakeDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "fantasy poster"})
+
+    assert response.status_code == 200
+    summary = records[0]["response_summary"]
+    assert summary["query_terms"] == ["fantasy poster"]
+    assert "fantasy:英文单词" in summary["ignored_terms"]
+    assert "poster:英文单词" in summary["ignored_terms"]
+    assert len(calls) == 1
+    assert calls[0][4] == "fantasy poster"
+    assert calls[0][5] == ["fantasy poster"]
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "fantasy"})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    summary = records[-1]["response_summary"]
+    assert summary["query_terms"] == []
+    assert summary["ignored_terms"] == ["fantasy:英文单词"]
+    assert len(calls) == 1
+
+
 def test_context_returns_empty_when_category_is_missing(monkeypatch) -> None:
     import aimemory.main as main_module
 
