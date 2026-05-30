@@ -119,9 +119,7 @@ export function registerAIMemoryRuntime(api, options = {}) {
       if (!isAllowedTurn(event, ctx, config)) {
         return {};
       }
-      const query = buildCleanMemoryQueryFromTurn(event, ctx, 1500, {
-        includePrompt: config.includePromptInMemoryQuery,
-      });
+      const query = buildCleanMemoryQueryFromTurn(event, ctx, 1500);
       if (!query) {
         return {};
       }

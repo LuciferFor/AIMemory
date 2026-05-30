@@ -11,13 +11,14 @@ requests or before context compaction.
 - Calls `GET /v1/memories/categories`, asks the current OpenClaw model to pick
   one existing category, then calls `POST /v1/memories/context` in
   `before_prompt_build`.
-- Builds the AIMemory query only from real user input and recent
-  user/assistant messages. Static prompt files such as `IDENTITY.md`,
-  `SOUL.md`, and `MEMORY.md` are not sent to AIMemory.
+- Builds the AIMemory query only from the current user input. Model replies,
+  previous messages, static prompt files such as `IDENTITY.md`, `SOUL.md`, and
+  `MEMORY.md` are not sent to AIMemory for retrieval.
 - Injects returned `context_text` into the current model turn.
 - Calls `GET /v1/memories/write-policy` and `POST /v1/memories` when saving;
   extracted memories must include `category`. Before compaction, only
-  structured user/assistant messages are extracted by default.
+  structured user/assistant messages are extracted by default, and the
+  extraction prompt asks the model to save memories in a third-person style.
 - Does not print API keys or full memory content in logs.
 - Keeps group/channel memory injection disabled unless explicitly configured.
 
@@ -77,6 +78,10 @@ The installer writes:
   }
 }
 ```
+
+`includePromptInMemoryQuery` is kept for old configs but retrieval no longer
+uses prompt/history text; AIMemory queries are based on the current user input
+only.
 
 ## Verify
 

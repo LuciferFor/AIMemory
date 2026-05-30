@@ -5,6 +5,7 @@ import {
   buildCategorySelectionMessages,
   buildCleanCompactionTranscript,
   buildCleanMemoryQueryFromTurn,
+  buildExtractionMessages,
   buildQueryFromTurn,
   containsForbiddenMemoryText,
   fetchCategories,
@@ -70,7 +71,7 @@ test("buildQueryFromTurn uses prompt and recent messages", () => {
   assert.match(query, /旧消息/);
 });
 
-test("clean query excludes static prompt and system messages", () => {
+test("clean query only uses current user input", () => {
   const query = buildCleanMemoryQueryFromTurn({
     prompt: "IDENTITY.md 永久人设\nSOUL.md 灵魂设定",
     userInput: "用户正在问苹果偏好",
@@ -83,21 +84,25 @@ test("clean query excludes static prompt and system messages", () => {
   });
 
   assert.match(query, /用户正在问苹果偏好/);
-  assert.match(query, /我喜欢香蕉/);
-  assert.match(query, /我记得了/);
+  assert.doesNotMatch(query, /我喜欢香蕉/);
+  assert.doesNotMatch(query, /我记得了/);
   assert.doesNotMatch(query, /IDENTITY\.md/);
   assert.doesNotMatch(query, /SOUL\.md/);
   assert.doesNotMatch(query, /MEMORY\.md/);
   assert.doesNotMatch(query, /不要发送给 AIMemory/);
 });
 
-test("clean query skips prompt-only turns unless compatibility flag is enabled", () => {
+test("clean query skips prompt-only and assistant-only turns", () => {
   const event = { prompt: "IDENTITY.md 永久人设" };
 
   assert.equal(buildCleanMemoryQueryFromTurn(event), "");
-  assert.match(
-    buildCleanMemoryQueryFromTurn(event, {}, 1500, { includePrompt: true }),
-    /IDENTITY\.md/,
+  assert.equal(buildCleanMemoryQueryFromTurn(event, {}, 1500, { includePrompt: true }), "");
+  assert.equal(
+    buildCleanMemoryQueryFromTurn({
+      message: { role: "assistant", content: "这是一段模型回复" },
+      messages: [{ role: "user", content: "历史用户消息" }],
+    }),
+    "",
   );
 });
 
@@ -126,6 +131,19 @@ test("clean compaction transcript uses only structured dialogue by default", () 
     ),
     /只有纯 transcript/,
   );
+});
+
+test("extraction prompt asks for third-person memory wording", () => {
+  const messages = buildExtractionMessages(
+    { prompt: "提取长期记忆。", output_schema: { title: "string" }, categories: [{ name: "偏好" }] },
+    "user: 我喜欢短回答\nassistant: 好的",
+    "before_compaction",
+  );
+
+  assert.match(messages[0].content, /第三方视角/);
+  assert.match(messages[0].content, /用户……/);
+  assert.match(messages[0].content, /助手应……/);
+  assert.match(messages[0].content, /不要写成“我喜欢”“我应该”/);
 });
 
 test("fetchMemoryContext returns context text and items", async () => {

@@ -233,6 +233,10 @@ function isConversationRole(role) {
   return ["user", "human", "assistant", "ai"].includes(normalizeRole(role));
 }
 
+function isUserRole(role) {
+  return ["user", "human"].includes(normalizeRole(role));
+}
+
 function roleLabel(role) {
   return ["assistant", "ai"].includes(normalizeRole(role)) ? "assistant" : "user";
 }
@@ -257,18 +261,53 @@ function addUnique(parts, seen, value) {
   seen.add(text);
 }
 
+function addUserMessageCandidate(parts, seen, value, { allowRoleless = false } = {}) {
+  if (value == null) {
+    return;
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const role = messageRole(value);
+    if (role && !isUserRole(role)) {
+      return;
+    }
+    if (!role && !allowRoleless) {
+      return;
+    }
+  }
+  addUnique(parts, seen, value);
+}
+
 export function extractCurrentUserInputText(event = {}) {
   const parts = [];
   const seen = new Set();
   for (const value of [
     event.userInput,
-    event.input,
-    event.content,
-    event.text,
-    event.body,
-    event.inbound,
+    event.user_input,
+    event.currentUserInput,
+    event.current_user_input,
+    event.userText,
+    event.user_text,
+    event.userMessage,
+    event.user_message,
+    event.userPrompt,
+    event.user_prompt,
   ]) {
     addUnique(parts, seen, value);
+  }
+
+  for (const value of [
+    event.input,
+    event.currentInput,
+    event.current_input,
+    event.inbound,
+    event.currentMessage,
+    event.current_message,
+  ]) {
+    addUserMessageCandidate(parts, seen, value, { allowRoleless: true });
+  }
+
+  for (const value of [event.message]) {
+    addUserMessageCandidate(parts, seen, value);
   }
   return parts.join("\n").trim();
 }
@@ -277,24 +316,7 @@ export function buildCleanMemoryQueryFromTurn(event = {}, ctx = {}, maxChars = 1
   const parts = [];
   const seen = new Set();
 
-  if (options.includePrompt === true) {
-    addUnique(parts, seen, extractPromptText(event));
-  }
-
   addUnique(parts, seen, extractCurrentUserInputText(event));
-
-  if (event.message && typeof event.message === "object" && isConversationRole(messageRole(event.message))) {
-    addUnique(parts, seen, event.message);
-  }
-
-  const messages = collectConversationMessages(event).slice(-4);
-  for (const message of messages) {
-    const role = messageRole(message);
-    if (!isConversationRole(role)) {
-      continue;
-    }
-    addUnique(parts, seen, message);
-  }
   return parts.join("\n").slice(-maxChars).trim();
 }
 
@@ -638,7 +660,7 @@ export function buildExtractionMessages(policy, sourceText, reason) {
   return [
     {
       role: "system",
-      content: `${prompt}${categoryText}\n\n只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
+      content: `${prompt}${categoryText}\n\n请使用第三方视角提取和改写记忆，写成“用户……”“助手应……”这类表述；不要写成“我喜欢”“我应该”。只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
     },
     {
       role: "user",

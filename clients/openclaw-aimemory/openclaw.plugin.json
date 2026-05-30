@@ -72,6 +72,7 @@
       },
       "includePromptInMemoryQuery": {
         "type": "boolean",
+        "description": "Deprecated compatibility flag. Retrieval uses current user input only.",
         "default": false
       },
       "includeUnstructuredTranscriptForCompaction": {
