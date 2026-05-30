@@ -654,6 +654,91 @@ def test_admin_can_create_ai_chat_thread(monkeypatch) -> None:
     assert db.committed is True
 
 
+def test_admin_can_create_ai_chat_thread_with_first_message(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    captured = {}
+
+    def fake_generate(db_arg, *, config, api_key, history):
+        captured["api_key"] = api_key
+        captured["history"] = history
+        return {
+            "content": "自动创建后的回复。",
+            "metadata": {},
+            "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+        }
+
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "自动标题")
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/ai-chat",
+        data={"csrf_token": csrf, "content": "直接查一下请求日志"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/admin/ai-chat/")
+    assert captured["api_key"] == "sk-test"
+    assert captured["history"][-1].content == "直接查一下请求日志"
+    assert db.thread.title == "自动标题"
+    assert db.thread.messages[-2].role == "user"
+    assert db.thread.messages[-1].content == "自动创建后的回复。"
+
+
+def test_admin_ai_chat_json_create_saves_user_before_reply(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/ai-chat",
+        data={"csrf_token": csrf, "content": "先显示这条消息"},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_url"].endswith("/reply")
+    assert db.thread.messages[-1].role == "user"
+    assert db.thread.messages[-1].content == "先显示这条消息"
+
+
+def test_admin_ai_chat_reply_endpoint_generates_assistant(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiChatDb()
+
+    def fake_generate(db_arg, *, config, api_key, history):
+        return {"content": "异步 AI 回复。", "metadata": {}, "usage": {"total_tokens": 8}}
+
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
+    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "异步标题")
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+    client.post(
+        "/admin/ai-chat",
+        data={"csrf_token": csrf, "content": "异步问一句"},
+        headers={"Accept": "application/json"},
+    )
+
+    response = client.post(
+        f"/admin/ai-chat/{db.thread.id}/reply",
+        data={"csrf_token": csrf},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["assistant"]["content"] == "异步 AI 回复。"
+    assert db.thread.messages[-1].role == "assistant"
+    assert db.thread.title == "异步标题"
+
+
 def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
     monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
     db = _AiChatDb()

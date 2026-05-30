@@ -143,20 +143,271 @@
         <h2>使用后台 AI 开始对话</h2>
         <p>它会固定带项目说明、表结构摘要和安全规则，适合排查配置、请求日志、分类和记忆数据。</p>
       </div>
+      <div class="ai-message-list ai-live-message-list" aria-live="polite"></div>
       <form method="post" action="/admin/ai-chat" class="ai-compose ai-compose-empty">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea rows="3" disabled placeholder="新建对话后即可发送问题"></textarea>
+        <textarea name="content" rows="3" maxlength="12000" required placeholder="直接输入问题，发送后自动新建对话"></textarea>
         <div class="ai-compose-actions">
           <div class="ai-compose-chips">
             <span>只读 SQL</span>
             <span>智能排查</span>
             <span>历史对话</span>
           </div>
-          <button type="submit" class="ai-send-button" title="开启新对话">＋</button>
+          <button type="submit" class="ai-send-button" title="发送并新建对话" {{ "disabled" if not ai_configured else "" }}>↑</button>
         </div>
       </form>
     </section>
     {% endif %}
   </section>
 </section>
+<script>
+  (function () {
+    function csrfFromForm(form) {
+      const input = form.querySelector("input[name='csrf_token']");
+      return input ? input.value : "";
+    }
+
+    function appendChatMessage(role, content, options) {
+      const list = document.querySelector(".ai-message-list");
+      if (!list) {
+        return null;
+      }
+      const start = document.querySelector(".ai-chat-start");
+      if (start) {
+        start.classList.add("is-chatting");
+      }
+
+      const row = document.createElement("article");
+      row.className = "ai-message-row " + role;
+      const avatar = document.createElement("div");
+      avatar.className = "ai-message-avatar";
+      avatar.textContent = role === "user" ? "你" : "AI";
+      const card = document.createElement("div");
+      card.className = "ai-message-card";
+      if (options && options.loading) {
+        card.classList.add("loading");
+      }
+      const header = document.createElement("header");
+      const name = document.createElement("strong");
+      name.textContent = role === "user" ? "管理员" : "AIMemory AI";
+      header.appendChild(name);
+      const text = document.createElement("div");
+      text.className = "ai-message-text";
+      text.textContent = content;
+      card.appendChild(header);
+      card.appendChild(text);
+      row.appendChild(avatar);
+      row.appendChild(card);
+      list.appendChild(row);
+      scrollChatToBottom(true);
+      return { row, card, text };
+    }
+
+    function chatScrollContainer() {
+      return document.querySelector(".ai-message-area") || document.querySelector(".ai-chat-start");
+    }
+
+    function scrollChatToBottom(smooth) {
+      const container = chatScrollContainer();
+      if (!container) {
+        return;
+      }
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: smooth ? "smooth" : "auto"
+      });
+    }
+
+    function updateBrowserThreadState(payload, form) {
+      if (!payload || !payload.thread_url) {
+        return;
+      }
+      if (form) {
+        form.action = payload.thread_url + "/messages";
+        form.classList.remove("ai-compose-empty");
+        form.classList.add("ai-compose-thread");
+      }
+      if (window.history && window.location.pathname !== payload.thread_url) {
+        window.history.replaceState({}, "", payload.thread_url);
+      }
+    }
+
+    function updateThreadTitle(payload) {
+      if (!payload || !payload.title) {
+        return;
+      }
+      const heading = document.querySelector(".ai-chat-workspace-head h2");
+      if (heading) {
+        heading.textContent = payload.title;
+      }
+      const activeTitle = document.querySelector(".ai-thread-row.active .ai-thread-item span");
+      if (activeTitle) {
+        activeTitle.textContent = payload.title;
+      }
+      document.title = payload.title + " - AI 对话 - AIMemory 管理后台";
+    }
+
+    function ensureActiveThreadInSidebar(payload, csrfToken) {
+      if (!payload || !payload.thread_url || !payload.thread_id) {
+        return;
+      }
+      if (document.querySelector(".ai-thread-row.active")) {
+        updateThreadTitle(payload);
+        return;
+      }
+      const list = document.querySelector(".ai-thread-list");
+      if (!list) {
+        return;
+      }
+      const empty = list.querySelector(".ai-empty-sidebar");
+      if (empty) {
+        empty.remove();
+      }
+
+      const row = document.createElement("div");
+      row.className = "ai-thread-row active";
+      const link = document.createElement("a");
+      link.className = "ai-thread-item";
+      link.href = payload.thread_url;
+      const title = document.createElement("span");
+      title.textContent = payload.title || "新对话";
+      const time = document.createElement("small");
+      time.textContent = "刚刚";
+      link.appendChild(title);
+      link.appendChild(time);
+
+      const deleteForm = document.createElement("form");
+      deleteForm.method = "post";
+      deleteForm.action = payload.thread_url + "/delete";
+      deleteForm.dataset.confirm = "确定删除这个 AI 对话吗？";
+      const csrf = document.createElement("input");
+      csrf.type = "hidden";
+      csrf.name = "csrf_token";
+      csrf.value = csrfToken || "";
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.className = "ai-thread-delete";
+      button.title = "删除对话";
+      button.textContent = "删除";
+      deleteForm.appendChild(csrf);
+      deleteForm.appendChild(button);
+
+      row.appendChild(link);
+      row.appendChild(deleteForm);
+      list.prepend(row);
+    }
+
+    async function readJson(response) {
+      try {
+        return await response.json();
+      } catch (error) {
+        return { ok: false, error: "后台返回不是合法 JSON。" };
+      }
+    }
+
+    async function postForm(url, formData) {
+      const encoded = new URLSearchParams(formData);
+      const response = await fetch(url, {
+        method: "POST",
+        body: encoded,
+        credentials: "same-origin",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "X-Requested-With": "fetch"
+        }
+      });
+      const payload = await readJson(response);
+      if (!response.ok || !payload.ok) {
+        let message = payload.error || payload.detail || "请求失败。";
+        if (Array.isArray(message)) {
+          message = message.map(function (item) { return item.msg || item.detail || String(item); }).join("；");
+        }
+        if (response.status === 403) {
+          message = "会话校验失败，请刷新页面后再试。";
+        }
+        throw new Error(message);
+      }
+      return payload;
+    }
+
+    document.querySelectorAll(".ai-compose").forEach(function (form) {
+      const textarea = form.querySelector("textarea[name='content']");
+      if (!textarea) {
+        return;
+      }
+
+      textarea.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+
+      form.addEventListener("submit", async function (event) {
+        if (!window.fetch) {
+          return;
+        }
+        event.preventDefault();
+        if (form.dataset.loading === "true") {
+          return;
+        }
+        const content = textarea.value.trim();
+        if (!content) {
+          textarea.focus();
+          return;
+        }
+
+        const sendForm = new FormData(form);
+        const submitButton = form.querySelector("button[type='submit']");
+        form.dataset.loading = "true";
+        textarea.disabled = true;
+        if (submitButton) {
+          submitButton.disabled = true;
+        }
+        appendChatMessage("user", content);
+        const loadingMessage = appendChatMessage("assistant", "正在回复，请稍等...", { loading: true });
+
+        try {
+          const sendPayload = await postForm(form.action, sendForm);
+          textarea.value = "";
+          updateBrowserThreadState(sendPayload, form);
+          ensureActiveThreadInSidebar(sendPayload, csrfFromForm(form));
+          updateThreadTitle(sendPayload);
+          const replyForm = new FormData();
+          replyForm.append("csrf_token", csrfFromForm(form));
+          const replyPayload = await postForm(sendPayload.reply_url, replyForm);
+          if (loadingMessage) {
+            loadingMessage.card.classList.remove("loading");
+            loadingMessage.text.textContent = replyPayload.assistant && replyPayload.assistant.content
+              ? replyPayload.assistant.content
+              : "已收到回复。";
+          }
+          updateBrowserThreadState(replyPayload.thread_url ? replyPayload : sendPayload, form);
+          updateThreadTitle(replyPayload);
+          ensureActiveThreadInSidebar(replyPayload.thread_url ? replyPayload : sendPayload, csrfFromForm(form));
+          scrollChatToBottom(true);
+        } catch (error) {
+          if (loadingMessage) {
+            loadingMessage.card.classList.remove("loading");
+            loadingMessage.card.classList.add("failed");
+            loadingMessage.text.textContent = error.message || "AI 回复失败。";
+          }
+        } finally {
+          textarea.disabled = false;
+          if (submitButton) {
+            submitButton.disabled = false;
+          }
+          form.dataset.loading = "false";
+          textarea.focus();
+        }
+      });
+    });
+
+    window.requestAnimationFrame(function () {
+      scrollChatToBottom(false);
+      window.setTimeout(function () { scrollChatToBottom(false); }, 80);
+    });
+  })();
+</script>
 {% endblock %}

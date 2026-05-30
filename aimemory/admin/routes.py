@@ -12,7 +12,7 @@ from redis import Redis
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from aimemory.admin.auth import (
     clear_admin_session,
@@ -66,7 +66,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260531-0258"
+ADMIN_ASSET_VERSION = "20260531-0412"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -191,6 +191,16 @@ def redirect_to(path: str, **params: str) -> RedirectResponse:
     query = urlencode({key: value for key, value in params.items() if value})
     url = f"{path}?{query}" if query else path
     return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+def wants_json_response(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    requested_with = request.headers.get("x-requested-with", "")
+    return "application/json" in accept.lower() or requested_with.lower() == "fetch"
+
+
+def chat_json_error(message: str, status_code: int = status.HTTP_400_BAD_REQUEST) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": message}, status_code=status_code)
 
 
 def require_admin_context(request: Request) -> dict[str, Any] | RedirectResponse:
@@ -742,6 +752,90 @@ def load_ai_chat_thread(db: Session, thread_id: uuid.UUID, admin_username: str) 
     return thread
 
 
+def ai_chat_thread_payload(thread: AiChatThread) -> dict[str, str]:
+    return {
+        "thread_id": str(thread.id),
+        "thread_url": f"/admin/ai-chat/{thread.id}",
+        "reply_url": f"/admin/ai-chat/{thread.id}/reply",
+        "title": thread.title,
+    }
+
+
+def save_ai_chat_user_message(db: Session, *, thread: AiChatThread, content: str) -> tuple[AiChatMessage, bool, list[AiChatMessage]]:
+    existing_messages = list(thread.messages)
+    is_first_message = not existing_messages
+    user_message = AiChatMessage(thread_id=thread.id, role="user", content=content, metadata_json={})
+    db.add(user_message)
+    if is_first_message:
+        thread.title = make_thread_title(content)
+    thread.updated_at = utcnow()
+    db.add(thread)
+    db.commit()
+    return user_message, is_first_message, existing_messages + [user_message]
+
+
+def append_ai_chat_reply(
+    db: Session,
+    *,
+    thread: AiChatThread,
+    config: LlmProviderConfig,
+    api_key: str,
+    history: list[AiChatMessage],
+    is_first_message: bool,
+    title_content: str,
+) -> AiChatMessage:
+    try:
+        result = generate_ai_chat_reply(db, config=config, api_key=api_key, history=history)
+        usage = result.get("usage") or {}
+        assistant_message = AiChatMessage(
+            thread_id=thread.id,
+            role="assistant",
+            content=str(result.get("content") or ""),
+            metadata_json=result.get("metadata") or {},
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+        )
+    except Exception as exc:
+        assistant_message = AiChatMessage(
+            thread_id=thread.id,
+            role="assistant",
+            content=f"AI 对话失败：{str(exc)[:1000]}",
+            metadata_json={"error": str(exc)[:1000]},
+            error=str(exc)[:2000],
+        )
+    db.add(assistant_message)
+    if is_first_message:
+        try:
+            thread.title = generate_ai_chat_title(config, api_key, title_content)
+        except Exception:
+            thread.title = make_thread_title(title_content)
+    thread.updated_at = utcnow()
+    db.add(thread)
+    db.commit()
+    return assistant_message
+
+
+def append_ai_chat_turn(
+    db: Session,
+    *,
+    thread: AiChatThread,
+    config: LlmProviderConfig,
+    api_key: str,
+    content: str,
+) -> AiChatMessage:
+    _, is_first_message, history = save_ai_chat_user_message(db, thread=thread, content=content)
+    return append_ai_chat_reply(
+        db,
+        thread=thread,
+        config=config,
+        api_key=api_key,
+        history=history,
+        is_first_message=is_first_message,
+        title_content=content,
+    )
+
+
 def ai_chat_context(
     request: Request,
     session: dict[str, Any],
@@ -781,9 +875,38 @@ async def create_ai_chat_thread(request: Request, db: Session = Depends(get_db))
         return session
     form = await read_urlencoded_form(request)
     verify_csrf(session, form)
+    wants_json = wants_json_response(request)
+    content = form.get("content", "").strip()
+    if wants_json and not content:
+        return chat_json_error("请输入要发送给 AI 的内容。")
+    if len(content) > 12000:
+        if wants_json:
+            return chat_json_error("单条消息不能超过 12000 字。")
+        return redirect_to("/admin/ai-chat", error="单条消息不能超过 12000 字。")
+
+    config = None
+    api_key = ""
+    if content:
+        config = get_llm_config(db)
+        if config is None or not config.enabled:
+            if wants_json:
+                return chat_json_error("AI 配置未启用，请先到 AI 设置页面保存并启用配置。")
+            return redirect_to("/admin/ai-chat", error="AI 配置未启用，请先到 AI 设置页面保存并启用配置。")
+        try:
+            api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
+        except AiConfigEncryptionError as exc:
+            if wants_json:
+                return chat_json_error(str(exc))
+            return redirect_to("/admin/ai-chat", error=str(exc))
+
     thread = AiChatThread(admin_username=session["sub"], title="新对话")
     db.add(thread)
     db.commit()
+    if content:
+        if wants_json:
+            save_ai_chat_user_message(db, thread=thread, content=content)
+            return JSONResponse({"ok": True, **ai_chat_thread_payload(thread)})
+        append_ai_chat_turn(db, thread=thread, config=config, api_key=api_key, content=content)
     return redirect_to(f"/admin/ai-chat/{thread.id}")
 
 
@@ -823,63 +946,90 @@ async def send_ai_chat_message(thread_id: uuid.UUID, request: Request, db: Sessi
         return session
     form = await read_urlencoded_form(request)
     verify_csrf(session, form)
+    wants_json = wants_json_response(request)
     content = form.get("content", "").strip()
     if not content:
+        if wants_json:
+            return chat_json_error("请输入要发送给 AI 的内容。")
         return redirect_to(f"/admin/ai-chat/{thread_id}", error="请输入要发送给 AI 的内容。")
     if len(content) > 12000:
+        if wants_json:
+            return chat_json_error("单条消息不能超过 12000 字。")
         return redirect_to(f"/admin/ai-chat/{thread_id}", error="单条消息不能超过 12000 字。")
 
     thread = load_ai_chat_thread(db, thread_id, session["sub"])
     config = get_llm_config(db)
     if config is None or not config.enabled:
+        if wants_json:
+            return chat_json_error("AI 配置未启用，请先到 AI 设置页面保存并启用配置。")
         return redirect_to(f"/admin/ai-chat/{thread_id}", error="AI 配置未启用，请先到 AI 整理页面保存并启用配置。")
 
     try:
         api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
     except AiConfigEncryptionError as exc:
+        if wants_json:
+            return chat_json_error(str(exc))
         return redirect_to(f"/admin/ai-chat/{thread_id}", error=str(exc))
 
-    existing_messages = list(thread.messages)
-    is_first_message = not existing_messages
-    user_message = AiChatMessage(thread_id=thread.id, role="user", content=content, metadata_json={})
-    db.add(user_message)
-    if is_first_message:
-        thread.title = make_thread_title(content)
-    thread.updated_at = utcnow()
-    db.add(thread)
-    db.commit()
+    if wants_json:
+        save_ai_chat_user_message(db, thread=thread, content=content)
+        return JSONResponse({"ok": True, **ai_chat_thread_payload(thread)})
 
-    history = existing_messages + [user_message]
-    try:
-        result = generate_ai_chat_reply(db, config=config, api_key=api_key, history=history)
-        usage = result.get("usage") or {}
-        assistant_message = AiChatMessage(
-            thread_id=thread.id,
-            role="assistant",
-            content=str(result.get("content") or ""),
-            metadata_json=result.get("metadata") or {},
-            prompt_tokens=usage.get("prompt_tokens"),
-            completion_tokens=usage.get("completion_tokens"),
-            total_tokens=usage.get("total_tokens"),
-        )
-    except Exception as exc:
-        assistant_message = AiChatMessage(
-            thread_id=thread.id,
-            role="assistant",
-            content=f"AI 对话失败：{str(exc)[:1000]}",
-            metadata_json={"error": str(exc)[:1000]},
-            error=str(exc)[:2000],
-        )
-    db.add(assistant_message)
-    if is_first_message:
-        try:
-            thread.title = generate_ai_chat_title(config, api_key, content)
-        except Exception:
-            thread.title = make_thread_title(content)
-    thread.updated_at = utcnow()
-    db.add(thread)
-    db.commit()
+    append_ai_chat_turn(db, thread=thread, config=config, api_key=api_key, content=content)
     return redirect_to(f"/admin/ai-chat/{thread.id}")
+
+
+@router.post("/ai-chat/{thread_id}/reply")
+async def generate_ai_chat_message_reply(thread_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    wants_json = wants_json_response(request)
+    thread = load_ai_chat_thread(db, thread_id, session["sub"])
+    config = get_llm_config(db)
+    if config is None or not config.enabled:
+        if wants_json:
+            return chat_json_error("AI 配置未启用，请先到 AI 设置页面保存并启用配置。")
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error="AI 配置未启用，请先到 AI 设置页面保存并启用配置。")
+    try:
+        api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
+    except AiConfigEncryptionError as exc:
+        if wants_json:
+            return chat_json_error(str(exc))
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error=str(exc))
+
+    history = list(thread.messages)
+    if not history:
+        if wants_json:
+            return chat_json_error("这个对话还没有用户消息。")
+        return redirect_to(f"/admin/ai-chat/{thread_id}", error="这个对话还没有用户消息。")
+    if history[-1].role != "user":
+        payload = {"ok": True, "already_replied": True, **ai_chat_thread_payload(thread)}
+        return JSONResponse(payload) if wants_json else redirect_to(f"/admin/ai-chat/{thread.id}")
+
+    is_first_message = len(history) == 1
+    title_content = str(history[-1].content or "")
+    assistant_message = append_ai_chat_reply(
+        db,
+        thread=thread,
+        config=config,
+        api_key=api_key,
+        history=history,
+        is_first_message=is_first_message,
+        title_content=title_content,
+    )
+    payload = {
+        "ok": True,
+        **ai_chat_thread_payload(thread),
+        "assistant": {
+            "content": assistant_message.content,
+            "error": assistant_message.error,
+            "total_tokens": assistant_message.total_tokens,
+        },
+    }
+    return JSONResponse(payload) if wants_json else redirect_to(f"/admin/ai-chat/{thread.id}")
 
 
 @router.get("/categories")
