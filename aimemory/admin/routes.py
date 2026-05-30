@@ -50,7 +50,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-2020"
+ADMIN_ASSET_VERSION = "20260530-2148"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -67,6 +67,44 @@ DELETED_MODE_LABELS = {
 }
 templates.env.globals["status_label"] = lambda value: STATUS_LABELS.get(value, value)
 templates.env.globals["deleted_mode_label"] = lambda value: DELETED_MODE_LABELS.get(value, value)
+
+
+def request_log_business(log: RequestLog) -> dict[str, str]:
+    path = str(getattr(log, "path", "") or "")
+    method = str(getattr(log, "method", "") or "").upper()
+    source = str(getattr(log, "source", "") or "")
+    status_code = int(getattr(log, "status_code", 0) or 0)
+
+    if path == "/v1/memories/context" and method == "POST":
+        label = "请求记忆"
+    elif path == "/v1/memories/search" and method == "POST":
+        label = "搜索记忆"
+    elif path == "/v1/memories" and method == "POST":
+        label = "保存记忆"
+    elif path == "/v1/memories" and method == "DELETE":
+        label = "删除记忆"
+    elif path == "/v1/memories/categories" and method == "GET":
+        label = "获取分类"
+    elif path == "/v1/memories/write-policy" and method == "GET":
+        label = "保存规则"
+    elif path.startswith("/v1/memories/attachments/") and method == "GET":
+        label = "下载附件"
+    elif source == "admin":
+        label = "管理后台"
+    elif source == "root":
+        label = "入口跳转"
+    elif source == "api":
+        label = "业务接口"
+    else:
+        label = "普通请求"
+
+    if status_code >= 500:
+        return {"label": f"{label}报错", "class": "failed"}
+    if status_code >= 400:
+        return {"label": f"{label}失败", "class": "warning"}
+    if status_code >= 300:
+        return {"label": label, "class": "pending"}
+    return {"label": label, "class": "ready"}
 
 
 def short_middle(value: object, head: int = 10, tail: int = 6) -> str:
@@ -789,7 +827,7 @@ def request_logs_page(
         query = query.where(RequestLog.created_at <= until_dt)
 
     rows = [
-        {"log": log, "user_name": user_name}
+        {"log": log, "user_name": user_name, "business": request_log_business(log)}
         for log, user_name in db.execute(query.limit(limit)).all()
     ]
     users = db.scalars(select(User).order_by(User.name)).all()

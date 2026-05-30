@@ -47,6 +47,7 @@
   <table class="request-log-table">
     <colgroup>
       <col class="col-log-time">
+      <col class="col-log-business">
       <col class="col-log-request">
       <col class="col-log-status">
       <col class="col-log-actor">
@@ -56,6 +57,7 @@
     <thead>
       <tr>
         <th>时间</th>
+        <th>业务</th>
         <th>请求</th>
         <th>状态</th>
         <th>身份</th>
@@ -68,6 +70,9 @@
       {% set log = row.log %}
       <tr>
         <td title="{{ full_datetime(log.created_at) }}">{{ compact_datetime(log.created_at) }}</td>
+        <td>
+          <span class="business-chip {{ row.business.class }}" title="{{ log.method }} {{ log.path }}">{{ row.business.label }}</span>
+        </td>
         <td class="request-cell">
           <span class="method-chip">{{ log.method }}</span>
           <strong title="{{ log.path }}">{{ log.path }}</strong>
@@ -98,12 +103,13 @@
         <td><code title="{{ log.request_id }}">{{ short_middle(log.request_id, 10, 8) }}</code></td>
       </tr>
       <tr class="request-log-detail-row">
-        <td colspan="6">
+        <td colspan="7">
           <details class="request-log-summary">
             <summary>详情</summary>
             {% if log.response_summary %}
             {% set summary = log.response_summary %}
             <div class="summary-head">
+              <span>业务 {{ row.business.label }}</span>
               <span>类型 {{ summary["type"] }}</span>
               <span>命中 {{ summary["result_count"] }}</span>
               <span>上下文 {{ summary["context_chars"] }} 字</span>
@@ -201,7 +207,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">暂无请求日志</td></tr>
+      <tr><td colspan="7" class="empty">暂无请求日志</td></tr>
       {% endfor %}
     </tbody>
   </table>

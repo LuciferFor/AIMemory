@@ -415,6 +415,7 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "请求日志" in response.text
+    assert "请求记忆" in response.text
     assert "/v1/memories/context" in response.text
     assert "request-log-123" in response.text
     assert "192.168.31.9" in response.text

@@ -664,8 +664,12 @@ th {
   width: 120px;
 }
 
+.request-log-table .col-log-business {
+  width: 118px;
+}
+
 .request-log-table .col-log-request {
-  width: 34%;
+  width: 29%;
 }
 
 .request-log-table .col-log-status {
@@ -711,6 +715,45 @@ th {
   color: #0369a1;
   font-size: 12px;
   font-weight: 800;
+}
+
+.business-chip {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid #dbe7ef;
+  background: #f8fafc;
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.business-chip.ready {
+  border-color: #bbf7d0;
+  background: #dcfce7;
+  color: #047857;
+}
+
+.business-chip.pending {
+  border-color: #fde68a;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.business-chip.warning {
+  border-color: #fed7aa;
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.business-chip.failed {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #dc2626;
 }
 
 .request-log-detail-row > td {
