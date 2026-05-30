@@ -115,7 +115,7 @@ def test_unauthorized_api_request_is_written_to_request_log(monkeypatch) -> None
     get_settings.cache_clear()
     client = TestClient(main_module.create_app())
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "secret memory text"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "secret memory text"})
 
     assert response.status_code == 401
     assert len(records) == 1
@@ -149,6 +149,9 @@ def test_authorized_api_request_log_includes_api_identity(monkeypatch) -> None:
     class FakeDb:
         def scalar(self, query):
             return api_key
+
+        def execute(self, query):
+            return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: []))
 
         def add(self, value) -> None:
             pass

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 AgentId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 ExternalId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=256)]
+CategoryName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
 Content = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
 Filename = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
@@ -37,6 +38,7 @@ class MemoryAttachmentMeta(BaseModel):
 class MemoryUpsertRequest(BaseModel):
     agent_id: AgentId
     external_id: ExternalId
+    category: CategoryName
     title: Title
     content: Content
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -53,6 +55,7 @@ class MemoryUpsertResponse(BaseModel):
 
 class MemorySearchRequest(BaseModel):
     agent_id: AgentId
+    category: CategoryName
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=10, ge=1, le=50)
     metadata_filter: dict[str, Any] | None = None
@@ -83,6 +86,7 @@ class MemorySearchItem(BaseModel):
 
     memory_id: UUID
     external_id: str
+    category: str
     title: str
     content: str
     metadata: dict[str, Any]
@@ -100,6 +104,7 @@ class MemorySearchResponse(BaseModel):
 
 class MemoryContextRequest(BaseModel):
     agent_id: AgentId
+    category: CategoryName
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=8, ge=1, le=50)
     metadata_filter: dict[str, Any] | None = None
@@ -117,6 +122,7 @@ class MemoryContextRequest(BaseModel):
 class MemoryContextItem(BaseModel):
     memory_id: UUID
     external_id: str
+    category: str
     title: str
     score: float
     embedding_status: str
@@ -128,12 +134,24 @@ class MemoryContextResponse(BaseModel):
     usage_hint: dict[str, Any]
 
 
+class MemoryCategoryItem(BaseModel):
+    category_id: UUID
+    name: str
+    description: str | None = None
+    memory_count: int = 0
+
+
+class MemoryCategoriesResponse(BaseModel):
+    items: list[MemoryCategoryItem]
+
+
 class MemoryWritePolicyResponse(BaseModel):
     prompt: str
     output_schema: dict[str, Any]
     required_fields: list[str]
     rules: list[str]
     forbidden: list[str]
+    categories: list[MemoryCategoryItem] = Field(default_factory=list)
 
 
 class MemoryDeleteRequest(BaseModel):

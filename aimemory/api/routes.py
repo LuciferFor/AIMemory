@@ -12,6 +12,7 @@ from starlette.responses import RedirectResponse, Response
 from aimemory.api.deps import get_current_user
 from aimemory.db.session import get_db
 from aimemory.models.user import User
+from aimemory.repositories.memory_categories import get_active_category, list_category_summaries
 from aimemory.repositories.memories import (
     SearchAttachment,
     filter_high_frequency_terms,
@@ -28,6 +29,8 @@ from aimemory.schemas.memory import (
     MemoryDeleteRequest,
     MemoryDeleteResponse,
     MemoryAttachmentMeta,
+    MemoryCategoriesResponse,
+    MemoryCategoryItem,
     MemorySearchItem,
     MemorySearchRequest,
     MemorySearchResponse,
@@ -63,6 +66,7 @@ WRITE_POLICY_RULES = [
     "只保存未来有复用价值的信息。",
     "一条事实、偏好、规则或工作流保存成一条记忆。",
     "相似内容合并；如果新信息覆盖旧规则，复用同一个 external_id 更新旧记忆。",
+    "每条记忆必须选择一个 category；优先使用已有分类，只有确实不合适时才创建新分类。",
     "metadata 至少建议包含 category、scope、priority、tags、source。",
     "保存前去重，避免把同一偏好或规则反复写入。",
 ]
@@ -81,21 +85,23 @@ WRITE_POLICY_PROMPT = """请从即将压缩或归档的对话中提取值得长�
 只保存未来有复用价值的信息，不要保存临时闲聊、重复内容、密码、密钥、sudo 密码或敏感凭据。
 把每条独立事实、偏好、规则或工作流拆成一条记忆；相似内容要合并。
 如果新信息覆盖旧规则，请使用相同 external_id 更新旧记忆。
-请只输出 JSON 数组，每条包含 external_id、title、content、metadata、occurred_at。"""
+每条记忆必须包含 category。优先从已有分类列表选择；如果没有合适分类，可以创建简短明确的新分类。
+请只输出 JSON 数组，每条包含 external_id、category、title、content、metadata、occurred_at。"""
 
 WRITE_POLICY_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "array",
     "items": {
         "type": "object",
-        "required": ["external_id", "title", "content", "metadata"],
+        "required": ["external_id", "category", "title", "content", "metadata"],
         "properties": {
             "external_id": "稳定唯一 ID，用 kebab-case 或带日期的 slug。",
+            "category": "事务分类名称，例如 爱吃的水果、喜欢的人、性取向、脾气；优先使用已有分类。",
             "title": "简短可检索标题。",
             "content": "完整但精炼的记忆内容。",
             "metadata": {
-                "category": "chat_style|group_rule|visual_identity|voice_workflow|automation|technical|safety|other",
-                "scope": "private|group|global|image|voice|workflow",
-                "priority": "high|normal|low",
+                "category": "回答风格|群聊规则|视觉身份|语音流程|自动化|技术资料|安全规则|其他",
+                "scope": "私聊|群聊|全局|图片|语音|工作流",
+                "priority": "高|普通|低",
                 "tags": ["关键词"],
                 "source": "来源，例如 conversation_compression",
             },
@@ -136,6 +142,7 @@ def write_memory(
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
             "external_id": payload.external_id,
+            "category": payload.category,
             "action": action,
             "memory_id": memory.id,
             "indexing_mode": "text",
@@ -160,13 +167,15 @@ def search_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemorySearchResponse:
-    results, used_vector, duration_ms, query_terms, ignored_terms = _search_results(db, current_user, payload)
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = _search_results(db, current_user, payload)
     logger.info(
         "memory.search",
         extra={
             "event": "memory.search",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "category": payload.category,
+            "category_found": category_found,
             "top_k": payload.top_k,
             "result_count": len(results),
             "used_vector": used_vector,
@@ -180,6 +189,7 @@ def search_memory(
             MemorySearchItem(
                 memory_id=result.memory_id,
                 external_id=result.external_id,
+                category=result.category,
                 title=result.title,
                 content=result.content,
                 metadata=result.metadata,
@@ -202,10 +212,12 @@ def build_memory_context(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
-    results, used_vector, search_duration_ms, query_terms, ignored_terms = _search_results(db, current_user, payload)
+    results, used_vector, search_duration_ms, query_terms, ignored_terms, category_found = _search_results(db, current_user, payload)
     context_text = build_context_text(results, payload.max_chars)
     request.state.request_log_response_summary = build_context_response_summary(
         payload.agent_id,
+        payload.category,
+        category_found,
         payload.query,
         payload.top_k,
         query_terms,
@@ -220,6 +232,8 @@ def build_memory_context(
             "event": "memory.context",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "category": payload.category,
+            "category_found": category_found,
             "top_k": payload.top_k,
             "result_count": len(results),
             "used_vector": used_vector,
@@ -236,6 +250,7 @@ def build_memory_context(
             MemoryContextItem(
                 memory_id=result.memory_id,
                 external_id=result.external_id,
+                category=result.category,
                 title=result.title,
                 score=result.score,
                 embedding_status=result.embedding_status,
@@ -246,9 +261,19 @@ def build_memory_context(
     )
 
 
+@router.get("/categories", response_model=MemoryCategoriesResponse)
+def list_memory_categories(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemoryCategoriesResponse:
+    categories = list_category_summaries(db, current_user.id)
+    return MemoryCategoriesResponse(items=[category_item(category) for category in categories])
+
+
 @router.get("/write-policy", response_model=MemoryWritePolicyResponse)
 def get_write_policy(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> MemoryWritePolicyResponse:
     logger.info(
         "memory.write_policy",
@@ -260,9 +285,10 @@ def get_write_policy(
     return MemoryWritePolicyResponse(
         prompt=WRITE_POLICY_PROMPT,
         output_schema=WRITE_POLICY_OUTPUT_SCHEMA,
-        required_fields=["external_id", "title", "content", "metadata"],
+        required_fields=["external_id", "category", "title", "content", "metadata"],
         rules=WRITE_POLICY_RULES,
         forbidden=WRITE_POLICY_FORBIDDEN,
+        categories=[category_item(category) for category in list_category_summaries(db, current_user.id)],
     )
 
 
@@ -319,20 +345,25 @@ def _search_results(
 ):
     start = time.perf_counter()
     stopwords = active_search_stopword_terms(db, current_user.id)
+    category = get_active_category(db, current_user.id, payload.category)
+    if category is None:
+        return [], False, round((time.perf_counter() - start) * 1000, 2), [], [f"{payload.category}:分类不存在"], False
+
     query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
     query_terms, high_frequency_ignored_terms = filter_high_frequency_terms(
         db,
         current_user.id,
+        category.id,
         payload.agent_id,
         query_terms,
     )
     ignored_terms.extend(high_frequency_ignored_terms)
     if not query_terms:
-        return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms
+        return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True
 
     normalized_query = normalize_query(" ".join(query_terms))
-    results = search_memories(db, current_user.id, payload, normalized_query, query_terms)
-    return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms
+    results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms)
+    return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:
@@ -360,6 +391,8 @@ def build_context_text(results: list[Any], max_chars: int) -> str:
 
 def build_context_response_summary(
     agent_id: str,
+    category: str,
+    category_found: bool,
     query: str,
     top_k: int,
     query_terms: list[str],
@@ -373,6 +406,9 @@ def build_context_response_summary(
     return {
         "type": "context",
         "agent_id": agent_id,
+        "category": category,
+        "category_found": category_found,
+        "category_not_found": not category_found,
         "query": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
         "query_preview": preview_text(query, REQUEST_LOG_QUERY_PREVIEW_CHARS),
         "top_k": top_k,
@@ -397,6 +433,15 @@ def build_context_response_summary(
             for result in results
         ],
     }
+
+
+def category_item(category: Any) -> MemoryCategoryItem:
+    return MemoryCategoryItem(
+        category_id=category.id,
+        name=category.name,
+        description=category.description,
+        memory_count=category.memory_count,
+    )
 
 
 def matched_terms_for_log(result: Any, query_terms: list[str]) -> list[str]:

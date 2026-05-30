@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildCategorySelectionMessages,
   buildQueryFromTurn,
   containsForbiddenMemoryText,
+  fetchCategories,
   fetchMemoryContext,
   hasExplicitRememberIntent,
   isAllowedTurn,
   normalizeExtractedMemories,
+  parseSelectedCategory,
   parseEnvText,
   resolveConfig,
   stableExternalId,
@@ -77,6 +80,7 @@ test("fetchMemoryContext returns context text and items", async () => {
     },
   );
   const result = await fetchMemoryContext(config, "偏好", {
+    category: "回答偏好",
     fetchImpl: async (url, request) => {
       calls.push({ url, request });
       return new Response(
@@ -89,7 +93,31 @@ test("fetchMemoryContext returns context text and items", async () => {
   assert.equal(result.contextText, "长期记忆");
   assert.equal(result.items.length, 1);
   assert.equal(calls[0].url, "http://aimemory/v1/memories/context");
-  assert.equal(JSON.parse(calls[0].request.body).agent_id, "agent");
+  const body = JSON.parse(calls[0].request.body);
+  assert.equal(body.agent_id, "agent");
+  assert.equal(body.category, "回答偏好");
+});
+
+test("fetchCategories returns category list", async () => {
+  const config = resolveConfig(
+    {},
+    {
+      envValues: {
+        AIMEMORY_BASE_URL: "http://aimemory",
+        AIMEMORY_API_KEY: "aim_key",
+        AIMEMORY_AGENT_ID: "agent",
+      },
+      processEnv: {},
+    },
+  );
+  const items = await fetchCategories(config, {
+    fetchImpl: async (url) => {
+      assert.equal(url, "http://aimemory/v1/memories/categories");
+      return new Response(JSON.stringify({ items: [{ name: "回答偏好" }] }), { status: 200 });
+    },
+  });
+
+  assert.equal(items[0].name, "回答偏好");
 });
 
 test("runtime context failure does not block prompt build", async () => {
@@ -133,13 +161,22 @@ test("runtime context success injects prependContext", async () => {
           return { info() {}, warn() {}, error() {} };
         },
       },
+      llm: {
+        async complete() {
+          return '{"category":"回答偏好"}';
+        },
+      },
     },
   };
   registerAIMemoryRuntime(api, {
-    fetchImpl: async () =>
-      new Response(JSON.stringify({ context_text: "记忆上下文", items: [{ title: "x" }] }), {
+    fetchImpl: async (url) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(JSON.stringify({ items: [{ name: "回答偏好" }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ context_text: "记忆上下文", items: [{ title: "x" }] }), {
         status: 200,
-      }),
+      });
+    },
     envValues: {
       AIMEMORY_BASE_URL: "http://aimemory",
       AIMEMORY_API_KEY: "aim_key",
@@ -163,6 +200,7 @@ test("memory extraction JSON normalizes and filters forbidden content", () => {
     JSON.stringify([
       {
         external_id: "Preference Answer Style",
+        category: "回答偏好",
         title: "回答偏好",
         content: "用户喜欢短回答。",
         metadata: { category: "preference" },
@@ -176,7 +214,16 @@ test("memory extraction JSON normalizes and filters forbidden content", () => {
 
   assert.equal(memories.length, 1);
   assert.equal(memories[0].external_id, "preference-answer-style");
+  assert.equal(memories[0].category, "回答偏好");
   assert.equal(memories[0].metadata.category, "preference");
+});
+
+test("category selection parses only known categories", () => {
+  const categories = [{ name: "回答偏好" }, { name: "爱吃的水果" }];
+
+  assert.equal(parseSelectedCategory('{"category":"回答偏好"}', categories), "回答偏好");
+  assert.equal(parseSelectedCategory('{"category":"不存在"}', categories), "");
+  assert.match(buildCategorySelectionMessages(categories, "用户喜欢苹果")[1].content, /爱吃的水果/);
 });
 
 test("stable external id is deterministic", () => {

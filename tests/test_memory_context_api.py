@@ -14,6 +14,12 @@ from aimemory.schemas.memory import MemorySearchRequest
 
 
 class _FakeDb:
+    def __init__(self) -> None:
+        self.category_id = uuid4()
+
+    def scalar(self, query):
+        return SimpleNamespace(id=self.category_id, name="偏好", description=None)
+
     def scalars(self, query):
         return SimpleNamespace(all=lambda: [])
 
@@ -28,6 +34,24 @@ class _HighFrequencyDb:
             {"term": "苹果", "match_count": 1, "total_count": 10},
         ]
         return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: rows))
+
+
+class _CategoryListDb(_FakeDb):
+    def execute(self, query, params=None):
+        rows = [
+            {
+                "id": uuid4(),
+                "name": "偏好",
+                "description": "偏好类记忆",
+                "memory_count": 3,
+            }
+        ]
+        return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: rows))
+
+
+class _NoCategoryDb(_FakeDb):
+    def scalar(self, query):
+        return None
 
 
 def _client_with_user(monkeypatch=None) -> TestClient:
@@ -45,7 +69,7 @@ def test_context_requires_auth(monkeypatch) -> None:
     get_settings.cache_clear()
     client = TestClient(create_app())
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "偏好"})
 
     assert response.status_code == 401
 
@@ -64,7 +88,7 @@ def test_context_returns_empty_text_without_memories(monkeypatch) -> None:
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [])
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "偏好"})
 
     assert response.status_code == 200
     body = response.json()
@@ -78,6 +102,7 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     result = SearchResult(
         memory_id=uuid4(),
         external_id="pref-short-replies",
+        category="偏好",
         title="回复偏好：简短自然",
         content="用户喜欢短一点、自然一点的回答。",
         metadata={},
@@ -90,7 +115,7 @@ def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "回答偏好"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "回答偏好"})
 
     assert response.status_code == 200
     body = response.json()
@@ -109,6 +134,7 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     result = SearchResult(
         memory_id=uuid4(),
         external_id="pref-short-replies",
+        category="偏好",
         title="回复偏好：简短自然",
         content=long_content,
         metadata={},
@@ -127,13 +153,16 @@ def test_context_writes_response_summary_to_request_log(monkeypatch) -> None:
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
     client = TestClient(app)
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "回答偏好"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "回答偏好"})
 
     assert response.status_code == 200
     assert len(records) == 1
     summary = records[0]["response_summary"]
     assert summary["type"] == "context"
     assert summary["agent_id"] == "assistant"
+    assert summary["category"] == "偏好"
+    assert summary["category_found"] is True
+    assert summary["category_not_found"] is False
     assert summary["query"] == "回答偏好"
     assert summary["query_preview"] == "回答偏好"
     assert summary["top_k"] == 8
@@ -174,7 +203,7 @@ def test_context_ignores_numeric_and_user_stopwords(monkeypatch) -> None:
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
     client = TestClient(app)
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "2026-05-30 lucifer skill"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "偏好", "query": "2026-05-30 lucifer skill"})
 
     assert response.status_code == 200
     assert response.json()["items"] == []
@@ -190,6 +219,7 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
     result = SearchResult(
         memory_id=uuid4(),
         external_id="apple-preference",
+        category="偏好",
         title="苹果偏好",
         content="用户喜欢苹果。",
         metadata={},
@@ -210,13 +240,44 @@ def test_context_uses_effective_terms_for_search_and_log(monkeypatch) -> None:
 
     response = client.post(
         "/v1/memories/context",
-        json={"agent_id": "assistant", "query": "OpenClaw AIMemory lucifer 苹果"},
+        json={"agent_id": "assistant", "category": "偏好", "query": "OpenClaw AIMemory lucifer 苹果"},
     )
 
     assert response.status_code == 200
     assert len(calls) == 1
-    assert calls[0][3] == "苹果"
-    assert calls[0][4] == ["苹果"]
+    assert calls[0][4] == "苹果"
+    assert calls[0][5] == ["苹果"]
+
+
+def test_context_returns_empty_when_category_is_missing(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    records = []
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    get_settings.cache_clear()
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: _NoCategoryDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "不存在", "query": "苹果"})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    summary = records[0]["response_summary"]
+    assert summary["category"] == "不存在"
+    assert summary["category_found"] is False
+    assert summary["category_not_found"] is True
+    assert summary["ignored_terms"] == ["不存在:分类不存在"]
+
+
+def test_context_requires_category(monkeypatch) -> None:
+    client = _client_with_user(monkeypatch)
+
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
+
+    assert response.status_code == 422
 
 
 def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
@@ -229,9 +290,9 @@ def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
     monkeypatch.setattr(routes, "active_search_stopword_terms", lambda *args, **kwargs: set())
     monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (["苹果"], ["回答:高频弱词"]))
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
-    payload = MemorySearchRequest(agent_id="assistant", query="苹果 回答")
+    payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="苹果 回答")
 
-    results, used_vector, duration_ms, query_terms, ignored_terms = routes._search_results(
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = routes._search_results(
         _FakeDb(),
         SimpleNamespace(id=uuid4()),
         payload,
@@ -239,17 +300,19 @@ def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
 
     assert results == []
     assert used_vector is False
+    assert category_found is True
     assert duration_ms >= 0
     assert query_terms == ["苹果"]
     assert ignored_terms == ["回答:高频弱词"]
     assert len(calls) == 1
-    assert calls[0][3] == "苹果"
-    assert calls[0][4] == ["苹果"]
+    assert calls[0][4] == "苹果"
+    assert calls[0][5] == ["苹果"]
 
 
 def test_filter_high_frequency_terms_uses_user_memory_distribution() -> None:
     terms, ignored = filter_high_frequency_terms(
         _HighFrequencyDb(),
+        uuid4(),
         uuid4(),
         "assistant",
         ["不要", "苹果"],
@@ -265,6 +328,7 @@ def test_search_returns_attachment_metadata(monkeypatch) -> None:
     result = SearchResult(
         memory_id=uuid4(),
         external_id="image-memory",
+        category="图片",
         title="图片记忆",
         content="这条记忆带图片。",
         metadata={},
@@ -287,7 +351,7 @@ def test_search_returns_attachment_metadata(monkeypatch) -> None:
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
-    response = client.post("/v1/memories/search", json={"agent_id": "assistant", "query": "图片"})
+    response = client.post("/v1/memories/search", json={"agent_id": "assistant", "category": "图片", "query": "图片"})
 
     assert response.status_code == 200
     attachment = response.json()["items"][0]["attachments"][0]
@@ -301,6 +365,7 @@ def test_context_includes_attachment_description_without_base64(monkeypatch) -> 
     result = SearchResult(
         memory_id=uuid4(),
         external_id="image-memory",
+        category="图片",
         title="图片记忆",
         content="这条记忆带图片。",
         metadata={},
@@ -323,7 +388,7 @@ def test_context_includes_attachment_description_without_base64(monkeypatch) -> 
     client = _client_with_user(monkeypatch)
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "图片"})
+    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "图片", "query": "图片"})
 
     assert response.status_code == 200
     context_text = response.json()["context_text"]
@@ -369,6 +434,7 @@ def test_context_respects_max_chars(monkeypatch) -> None:
     result = SearchResult(
         memory_id=uuid4(),
         external_id="long-memory",
+        category="测试",
         title="很长的记忆",
         content="内容" * 200,
         metadata={},
@@ -383,7 +449,7 @@ def test_context_respects_max_chars(monkeypatch) -> None:
 
     response = client.post(
         "/v1/memories/context",
-        json={"agent_id": "assistant", "query": "很长", "max_chars": 80},
+        json={"agent_id": "assistant", "category": "测试", "query": "很长", "max_chars": 80},
     )
 
     assert response.status_code == 200
@@ -397,9 +463,26 @@ def test_write_policy_returns_standard_fields(monkeypatch) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"prompt", "output_schema", "required_fields", "rules", "forbidden"}
-    assert body["required_fields"] == ["external_id", "title", "content", "metadata"]
+    assert set(body) == {"prompt", "output_schema", "required_fields", "rules", "forbidden", "categories"}
+    assert body["required_fields"] == ["external_id", "category", "title", "content", "metadata"]
     assert "密码" in body["forbidden"]
+
+
+def test_categories_endpoint_returns_user_categories(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+    get_settings.cache_clear()
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: _CategoryListDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
+    client = TestClient(app)
+
+    response = client.get("/v1/memories/categories")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["name"] == "偏好"
+    assert item["description"] == "偏好类记忆"
+    assert item["memory_count"] == 3
 
 
 def test_search_results_uses_text_only(monkeypatch) -> None:
@@ -410,9 +493,9 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
         return []
 
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
-    payload = MemorySearchRequest(agent_id="assistant", query="自然 回复")
+    payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="自然 回复")
 
-    results, used_vector, duration_ms, query_terms, ignored_terms = routes._search_results(
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found = routes._search_results(
         _FakeDb(),
         SimpleNamespace(id=uuid4()),
         payload,
@@ -420,9 +503,10 @@ def test_search_results_uses_text_only(monkeypatch) -> None:
 
     assert results == []
     assert used_vector is False
+    assert category_found is True
     assert duration_ms >= 0
     assert query_terms == ["自然", "回复"]
     assert ignored_terms == []
-    assert len(calls[0]) == 5
-    assert calls[0][3] == "自然 回复"
-    assert calls[0][4] == ["自然", "回复"]
+    assert len(calls[0]) == 6
+    assert calls[0][4] == "自然 回复"
+    assert calls[0][5] == ["自然", "回复"]

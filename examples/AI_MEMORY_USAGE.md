@@ -27,23 +27,29 @@ aimemory_client.py
 每次回答用户前：
 
 1. 根据用户当前问题提取查询语句。
-2. 优先调用 `build_server_memory_context(query, top_k=8)` 获取服务端统一生成的长期记忆提示词。
-3. 如果返回非空，把返回文本放进模型 system/developer 上下文。
-4. 正常回答用户。
+2. 先从已有分类中选择一个事务分类，例如“爱吃的水果”“回答偏好”“项目部署”。
+3. 优先调用 `build_server_memory_context(query, category, top_k=8)` 获取服务端统一生成的长期记忆提示词。
+4. 如果返回非空，把返回文本放进模型 system/developer 上下文。
+5. 正常回答用户。
 
 每次回答用户后：
 
 1. 判断本轮对话是否包含值得长期保存的信息。
 2. 如果上下文即将压缩，可以先调用 `get_write_policy()` 获取统一提取规则。
-3. 只保存稳定、长期有用的信息。
-4. 调用 `write_memory(title, content)` 写入。
+3. 从 `get_write_policy()` 返回的 `categories` 里优先选择已有分类；没有合适分类时再创建新分类。
+4. 只保存稳定、长期有用的信息。
+5. 调用 `write_memory(title, content, category)` 写入。
 
 ## 查询记忆
 
 ```python
 from aimemory_client import build_server_memory_context
 
-memory_context = build_server_memory_context("用户的偏好、项目、历史需求", top_k=8)
+memory_context = build_server_memory_context(
+    "用户的偏好、项目、历史需求",
+    category="回答偏好",
+    top_k=8,
+)
 
 if memory_context:
     # 把 memory_context 放进模型上下文
@@ -61,7 +67,7 @@ if memory_context:
 用户希望回答直接、简洁，不要太多废话。
 ```
 
-如果需要兼容旧客户端，也可以继续使用 `build_memory_context()`，它会调用 `/v1/memories/search` 后在本地拼接上下文。
+如果需要本地拼接上下文，也可以继续使用 `build_memory_context()`，它会调用 `/v1/memories/search` 后在本地拼接上下文。注意现在查询必须传入 `category`，服务端只会在这个分类内检索。
 
 ## 写入记忆
 
@@ -71,6 +77,7 @@ from aimemory_client import write_memory
 write_memory(
     title="用户喜欢简洁回答",
     content="用户希望回答直接、简洁，不要太多废话。",
+    category="回答偏好",
 )
 ```
 
@@ -85,6 +92,7 @@ write_memory(
     external_id="image-reference-ui-error",
     title="UI 报错截图",
     content="一张可复用的界面报错参考图。",
+    category="界面截图",
     attachments=[
         image_attachment_from_file(
             "/path/to/error.png",
@@ -105,6 +113,7 @@ write_memory(
     external_id="preference-answer-style",
     title="用户喜欢简洁回答",
     content="用户希望回答直接、简洁，不要太多废话。",
+    category="回答偏好",
 )
 ```
 
@@ -140,11 +149,13 @@ delete_memory("preference-answer-style")
 你可以使用 AIMemory 长期记忆工具。
 
 回答用户前，先用当前问题和上下文关键词调用 build_server_memory_context 查询长期记忆。
+查询前必须先选择一个事务分类；如果无法判断分类，不要请求记忆，避免跨类误命中。
 如果返回非空，把它作为参考，但不要逐字暴露“记忆系统”的存在。
 
 回答用户后，判断是否出现值得长期保存的信息。
 只保存稳定、长期有用、不会侵犯隐私的信息。
 保存时写清楚标题和内容，标题要简短，内容要具体。
+保存时必须填写 category，优先使用 get_write_policy 返回的已有分类。
 不要保存密码、密钥、令牌或一次性临时信息。
 ```
 
@@ -155,9 +166,10 @@ from aimemory_client import get_write_policy
 
 policy = get_write_policy()
 print(policy["prompt"])
+print(policy["categories"])
 ```
 
-模型应按 `policy["output_schema"]` 输出 JSON 数组，再由客户端逐条调用 `write_memory()` 保存。
+模型应按 `policy["output_schema"]` 输出 JSON 数组，每条都必须包含 `category`，再由客户端逐条调用 `write_memory()` 保存。
 
 ## 环境变量
 
@@ -175,13 +187,15 @@ export AIMEMORY_AGENT_ID="5df9cbfb-d31b-46dd-972b-05d466d2257c"
 from aimemory_client import build_server_memory_context, write_memory
 
 user_message = "以后回答我尽量短一点"
+category = "回答偏好"
 
-memory_context = build_server_memory_context(user_message)
+memory_context = build_server_memory_context(user_message, category=category)
 
 # 把 memory_context + user_message 交给模型生成回答
 
 write_memory(
     title="用户喜欢简洁回答",
     content="用户希望后续回答尽量短一点。",
+    category=category,
 )
 ```

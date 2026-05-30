@@ -7,6 +7,7 @@ from aimemory.admin.auth import COOKIE_NAME, get_serializer
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
+from aimemory.models.memory_category import MemoryCategory
 from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
 
@@ -60,7 +61,19 @@ class _MemoryDb(_FakeDb):
     def __init__(self) -> None:
         self.user_id = uuid.uuid4()
         self.attachment_id = uuid.uuid4()
+        self.category_id = uuid.uuid4()
         self.users = [SimpleNamespace(id=self.user_id, name="lucifer")]
+        self.categories = [
+            SimpleNamespace(
+                id=self.category_id,
+                user_id=self.user_id,
+                name="偏好",
+                normalized_name="偏好",
+                description="测试分类",
+                deleted_at=None,
+                merged_into_id=None,
+            )
+        ]
         self.agents = ["agent-1"]
         attachment = SimpleNamespace(
             id=self.attachment_id,
@@ -77,6 +90,7 @@ class _MemoryDb(_FakeDb):
                 title="测试记忆标题",
                 content="第一行正文，第二行正文，第三行正文。",
                 user_id=self.user_id,
+                category_id=self.category_id,
                 agent_id="agent-1",
                 external_id="memory-active",
                 metadata_json={"category": "test"},
@@ -90,6 +104,7 @@ class _MemoryDb(_FakeDb):
                 title="已删除记忆",
                 content="已删除正文",
                 user_id=self.user_id,
+                category_id=self.category_id,
                 agent_id="agent-1",
                 external_id="memory-deleted",
                 metadata_json={},
@@ -104,7 +119,7 @@ class _MemoryDb(_FakeDb):
         self.committed = False
 
     def execute(self, query) -> _Rows:
-        return _Rows([(memory, "lucifer") for memory in self.memories])
+        return _Rows([(memory, "lucifer", "偏好") for memory in self.memories])
 
     def scalar(self, query):
         return self.memories[0]
@@ -113,6 +128,8 @@ class _MemoryDb(_FakeDb):
         self.scalars_calls += 1
         if self.scalars_calls == 1:
             return _Rows(self.users)
+        if self.scalars_calls == 2:
+            return _Rows(self.categories)
         return _Rows(self.agents)
 
     def add(self, value) -> None:
@@ -145,6 +162,9 @@ class _RequestLogDb(_FakeDb):
                 response_summary={
                     "type": "context",
                     "agent_id": "5df9cbfb-d31b-46dd-972b-05d466d2257c",
+                    "category": "偏好",
+                    "category_found": True,
+                    "category_not_found": False,
                     "query": "回答偏好",
                     "top_k": 8,
                     "max_chars": 3000,
@@ -224,6 +244,65 @@ class _StopwordDb(_FakeDb):
             return self.user
         if model is SearchStopword and key == self.stopword_id:
             return self.stopword
+        return None
+
+    def add(self, value) -> None:
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+class _CategoryDb(_FakeDb):
+    def __init__(self, for_merge: bool = False) -> None:
+        self.for_merge = for_merge
+        self.user_id = uuid.uuid4()
+        self.source_id = uuid.uuid4()
+        self.target_id = uuid.uuid4()
+        self.user = SimpleNamespace(id=self.user_id, name="lucifer")
+        self.source = SimpleNamespace(
+            id=self.source_id,
+            user_id=self.user_id,
+            name="爱吃水果",
+            normalized_name="爱吃水果",
+            description="水果偏好",
+            deleted_at=None,
+            merged_into_id=None,
+            updated_at=None,
+        )
+        self.target = SimpleNamespace(
+            id=self.target_id,
+            user_id=self.user_id,
+            name="爱吃的水果",
+            normalized_name="爱吃的水果",
+            description=None,
+            deleted_at=None,
+            merged_into_id=None,
+            updated_at=None,
+        )
+        self.memory = SimpleNamespace(id=uuid.uuid4(), category_id=self.source_id, deleted_at=None, updated_at=None)
+        self.added = []
+        self.committed = False
+        self.scalar_values: list[int] = []
+
+    def execute(self, query) -> _Rows:
+        return _Rows([(self.source, "lucifer", 1), (self.target, "lucifer", 0)])
+
+    def scalars(self, query) -> _Rows:
+        if self.for_merge:
+            return _Rows([self.memory])
+        return _Rows([self.user])
+
+    def scalar(self, query):
+        return self.scalar_values.pop(0) if self.scalar_values else 0
+
+    def get(self, model, key):
+        if model is User and key == self.user_id:
+            return self.user
+        if model is MemoryCategory and key == self.source_id:
+            return self.source
+        if model is MemoryCategory and key == self.target_id:
+            return self.target
         return None
 
     def add(self, value) -> None:
@@ -345,6 +424,7 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "请求内容" in response.text
     assert "回答偏好" in response.text
     assert "请求参数" in response.text
+    assert "分类 偏好" in response.text
     assert "top_k 8" in response.text
     assert "max_chars 3000" in response.text
     assert "有效关键词" in response.text
@@ -434,6 +514,38 @@ def test_admin_can_delete_search_stopword(monkeypatch) -> None:
     assert db.committed is True
 
 
+def test_admin_categories_page_lists_categories(monkeypatch) -> None:
+    db = _CategoryDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get(f"/admin/categories?user_id={db.user_id}")
+
+    assert response.status_code == 200
+    assert "分类" in response.text
+    assert "爱吃水果" in response.text
+    assert "水果偏好" in response.text
+    assert str(db.source_id) in response.text
+
+
+def test_admin_can_merge_category(monkeypatch) -> None:
+    db = _CategoryDb(for_merge=True)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/categories/{db.source_id}/merge",
+        data={"csrf_token": csrf, "target_category_id": str(db.target_id)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert db.memory.category_id == db.target_id
+    assert db.source.merged_into_id == db.target_id
+    assert db.source.deleted_at is not None
+    assert db.committed is True
+
+
 def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
     db = _MemoryDb()
     client = _client(monkeypatch, db=db)
@@ -493,7 +605,7 @@ def test_admin_memory_detail_page_shows_full_memory(monkeypatch) -> None:
     assert str(db.memories[0].id) in response.text
     assert "agent-1" in response.text
     assert "memory-active" in response.text
-    assert "category" in response.text
+    assert "偏好" in response.text
     assert "2026-05-30 18:00:00 北京时间" in response.text
     assert f"/admin/attachments/{db.attachment_id}" in response.text
     assert "screen.png" in response.text

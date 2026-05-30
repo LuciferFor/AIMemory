@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, defer
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.schemas.memory import MemorySearchRequest, MemoryUpsertRequest
+from aimemory.repositories.memory_categories import get_or_create_category
 from aimemory.services.attachments import (
     DecodedAttachment,
     attachment_search_text,
@@ -36,6 +37,7 @@ class SearchAttachment:
 class SearchResult:
     memory_id: uuid.UUID
     external_id: str
+    category: str
     title: str
     content: str
     metadata: dict[str, Any]
@@ -61,6 +63,7 @@ def utcnow() -> datetime:
 
 def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest) -> tuple[Memory, str]:
     decoded_attachments = decode_attachment_inputs(payload.attachments)
+    category, _ = get_or_create_category(db, user_id, payload.category)
     existing = db.scalar(
         select(Memory).where(
             Memory.user_id == user_id,
@@ -71,6 +74,7 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
     )
 
     if existing:
+        existing.category_id = category.id
         existing.title = payload.title
         existing.content = payload.content
         existing.metadata_json = payload.metadata
@@ -94,6 +98,7 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
     attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
     memory = Memory(
         user_id=user_id,
+        category_id=category.id,
         agent_id=payload.agent_id,
         external_id=payload.external_id,
         title=payload.title,
@@ -162,6 +167,7 @@ def get_attachment_for_admin(db: Session, attachment_id: uuid.UUID) -> MemoryAtt
 def search_memories(
     db: Session,
     user_id: uuid.UUID,
+    category_id: uuid.UUID,
     payload: MemorySearchRequest,
     normalized_query: str,
     query_terms: list[str] | None = None,
@@ -171,6 +177,7 @@ def search_memories(
         return []
     params: dict[str, Any] = {
         "user_id": user_id,
+        "category_id": category_id,
         "agent_id": payload.agent_id,
         "query": normalized_query,
         "terms": query_terms,
@@ -192,6 +199,7 @@ def search_memories(
 def filter_high_frequency_terms(
     db: Session,
     user_id: uuid.UUID,
+    category_id: uuid.UUID,
     agent_id: str,
     query_terms: list[str],
 ) -> tuple[list[str], list[str]]:
@@ -210,6 +218,7 @@ total AS (
     SELECT count(*)::float AS total_count
     FROM memories
     WHERE user_id = :user_id
+      AND category_id = :category_id
       AND agent_id = :agent_id
       AND deleted_at IS NULL
 ),
@@ -222,6 +231,7 @@ term_counts AS (
     CROSS JOIN total
     LEFT JOIN memories m
       ON m.user_id = :user_id
+     AND m.category_id = :category_id
      AND m.agent_id = :agent_id
      AND m.deleted_at IS NULL
      AND (
@@ -236,6 +246,7 @@ FROM term_counts
         ),
         {
             "user_id": user_id,
+            "category_id": category_id,
             "agent_id": agent_id,
             "terms": query_terms,
         },
@@ -259,6 +270,7 @@ FROM term_counts
 def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) -> str:
     clauses = [
         "m.user_id = :user_id",
+        "m.category_id = :category_id",
         "m.agent_id = :agent_id",
         "m.deleted_at IS NULL",
     ]
@@ -367,6 +379,7 @@ scored AS (
     SELECT
         m.id AS memory_id,
         m.external_id,
+        c.name AS category,
         m.title,
         m.content,
         m."metadata" AS metadata,
@@ -385,6 +398,7 @@ scored AS (
         tc.matched_terms,
         tc.matched_fields
     FROM memories m
+    JOIN memory_categories c ON c.id = m.category_id
     JOIN text_candidates tc ON tc.id = m.id
 ),
 weighted AS (
@@ -415,6 +429,7 @@ def _row_to_result(row: Any) -> SearchResult:
     return SearchResult(
         memory_id=row["memory_id"],
         external_id=row["external_id"],
+        category=row["category"],
         title=row["title"],
         content=row["content"],
         metadata=row["metadata"] or {},

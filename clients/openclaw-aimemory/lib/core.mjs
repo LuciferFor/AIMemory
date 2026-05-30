@@ -308,7 +308,7 @@ export function sanitizeExternalId(value) {
 
 export function stableExternalId(memory) {
   const metadata = memory?.metadata && typeof memory.metadata === "object" ? memory.metadata : {};
-  const category = sanitizeExternalId(metadata.category || metadata.kind || "memory") || "memory";
+  const category = sanitizeExternalId(memory?.category || metadata.category || metadata.kind || "memory") || "memory";
   const title = String(memory?.title || "");
   const content = String(memory?.content || "");
   const digest = createHash("sha256").update(`${title}\n${content}`).digest("hex").slice(0, 12);
@@ -371,8 +371,13 @@ export function normalizeMemoryCandidate(candidate) {
     candidate.metadata && typeof candidate.metadata === "object" && !Array.isArray(candidate.metadata)
       ? candidate.metadata
       : {};
+  const category = String(candidate.category || metadata.category || metadata.kind || "").trim();
+  if (!category) {
+    return null;
+  }
   const memory = {
     external_id: sanitizeExternalId(candidate.external_id || candidate.externalId || ""),
+    category: category.slice(0, 128),
     title: title.slice(0, 512),
     content,
     metadata,
@@ -430,12 +435,17 @@ export async function aimemoryRequest(config, method, pathName, payload, options
 }
 
 export async function fetchMemoryContext(config, query, options = {}) {
+  const category = options.category || config.category;
+  if (!category) {
+    return { contextText: "", items: [] };
+  }
   const response = await aimemoryRequest(
     config,
     "POST",
     "/v1/memories/context",
     {
       agent_id: config.agentId,
+      category,
       query,
       top_k: config.topK,
       max_chars: config.maxChars,
@@ -452,6 +462,11 @@ export async function fetchWritePolicy(config, options = {}) {
   return aimemoryRequest(config, "GET", "/v1/memories/write-policy", null, options);
 }
 
+export async function fetchCategories(config, options = {}) {
+  const response = await aimemoryRequest(config, "GET", "/v1/memories/categories", null, options);
+  return Array.isArray(response.items) ? response.items : [];
+}
+
 export async function writeMemory(config, memory, options = {}) {
   return aimemoryRequest(
     config,
@@ -460,6 +475,7 @@ export async function writeMemory(config, memory, options = {}) {
     {
       agent_id: config.agentId,
       external_id: memory.external_id,
+      category: memory.category,
       title: memory.title,
       content: memory.content,
       metadata: memory.metadata || {},
@@ -489,14 +505,55 @@ export function extractTextFromLlmResult(result) {
 export function buildExtractionMessages(policy, sourceText, reason) {
   const prompt = String(policy?.prompt || "Extract durable long-term memories as JSON.");
   const schema = policy?.output_schema ? JSON.stringify(policy.output_schema, null, 2) : "";
+  const categories = Array.isArray(policy?.categories) ? policy.categories : [];
+  const categoryText = categories.length
+    ? `\n\n已有分类列表:\n${categories
+        .map((item) => `- ${item.name}${item.description ? `：${item.description}` : ""}`)
+        .join("\n")}`
+    : "\n\n已有分类列表为空。没有合适分类时可以创建简短明确的新分类。";
   return [
     {
       role: "system",
-      content: `${prompt}\n\n只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
+      content: `${prompt}${categoryText}\n\n只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
     },
     {
       role: "user",
       content: `来源: ${reason}\n\n请从以下内容提取值得长期保存的记忆，忽略密码、密钥、token、sudo 密码和一次性闲聊。\n\n${sourceText}`,
     },
   ];
+}
+
+export function buildCategorySelectionMessages(categories, query) {
+  const list = Array.isArray(categories) ? categories : [];
+  const categoryText = list
+    .map((item) => `- ${item.name}${item.description ? `：${item.description}` : ""}`)
+    .join("\n");
+  return [
+    {
+      role: "system",
+      content:
+        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；如果没有明确合适分类，输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
+    },
+    {
+      role: "user",
+      content: `已有分类:\n${categoryText || "无"}\n\n当前请求:\n${query}`,
+    },
+  ];
+}
+
+export function parseSelectedCategory(value, categories) {
+  const text = stripJsonCodeFence(extractTextFromLlmResult(value));
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const normalizedText = String(text || "").trim();
+    parsed = { category: normalizedText || null };
+  }
+  const selected = String(parsed?.category || "").trim();
+  if (!selected) {
+    return "";
+  }
+  const known = new Set((categories || []).map((item) => String(item.name || "").trim()));
+  return known.has(selected) ? selected : "";
 }

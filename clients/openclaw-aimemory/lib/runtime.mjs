@@ -1,15 +1,18 @@
 import {
   buildExtractionMessages,
+  buildCategorySelectionMessages,
   buildQueryFromTurn,
   buildTranscriptText,
   extractInboundText,
   extractTextFromLlmResult,
   fetchMemoryContext,
+  fetchCategories,
   fetchWritePolicy,
   hasExplicitRememberIntent,
   isAllowedTurn,
   maskSecret,
   normalizeExtractedMemories,
+  parseSelectedCategory,
   resolveConfig,
   writeMemory,
 } from "./core.mjs";
@@ -81,6 +84,31 @@ async function extractAndWriteMemories(api, event, ctx, config, sourceText, reas
   return { extracted: memories.length, written };
 }
 
+async function selectMemoryCategory(api, config, query, options, logger) {
+  const categories = await fetchCategories(config, options);
+  if (!categories.length) {
+    logger.info("aimemory.category skipped: no categories");
+    return "";
+  }
+  if (!api.runtime?.llm?.complete) {
+    logger.warn("aimemory.category skipped: api.runtime.llm.complete unavailable");
+    return "";
+  }
+  const result = await api.runtime.llm.complete({
+    messages: buildCategorySelectionMessages(categories, query),
+    purpose: "aimemory.category",
+    maxTokens: 120,
+    temperature: 0,
+  });
+  const category = parseSelectedCategory(result, categories);
+  if (!category) {
+    logger.info("aimemory.category empty");
+    return "";
+  }
+  logger.info("aimemory.category selected", { category });
+  return category;
+}
+
 export function registerAIMemoryRuntime(api, options = {}) {
   registerHook(
     api,
@@ -96,12 +124,17 @@ export function registerAIMemoryRuntime(api, options = {}) {
         return {};
       }
       try {
-        const result = await fetchMemoryContext(config, query, options);
+        const category = await selectMemoryCategory(api, config, query, options, logger);
+        if (!category) {
+          return {};
+        }
+        const result = await fetchMemoryContext(config, query, { ...options, category });
         if (!result.contextText) {
-          logger.info("aimemory.context empty", { items: result.items.length });
+          logger.info("aimemory.context empty", { category, items: result.items.length });
           return {};
         }
         logger.info("aimemory.context injected", {
+          category,
           items: result.items.length,
           chars: result.contextText.length,
         });

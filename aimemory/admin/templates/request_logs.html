@@ -118,6 +118,8 @@
                 <span class="summary-label">请求参数</span>
                 <span class="term-list">
                   {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("category") %}<code class="term-chip">分类 {{ summary.get("category") }}</code>{% endif %}
+                  {% if summary.get("category_not_found") %}<code class="term-chip ignored">分类不存在</code>{% endif %}
                   {% if summary.get("top_k") %}<code class="term-chip">top_k {{ summary.get("top_k") }}</code>{% endif %}
                   {% if summary.get("max_chars") %}<code class="term-chip">max_chars {{ summary.get("max_chars") }}</code>{% endif %}
                   {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") %}<span class="muted">未记录</span>{% endif %}

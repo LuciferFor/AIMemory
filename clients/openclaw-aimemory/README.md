@@ -8,9 +8,12 @@ requests or before context compaction.
 
 - Runs on all OpenClaw channels, but only for private/direct/DM sessions by
   default.
-- Calls `POST /v1/memories/context` in `before_prompt_build`.
+- Calls `GET /v1/memories/categories`, asks the current OpenClaw model to pick
+  one existing category, then calls `POST /v1/memories/context` in
+  `before_prompt_build`.
 - Injects returned `context_text` into the current model turn.
-- Calls `GET /v1/memories/write-policy` and `POST /v1/memories` when saving.
+- Calls `GET /v1/memories/write-policy` and `POST /v1/memories` when saving;
+  extracted memories must include `category`.
 - Does not print API keys or full memory content in logs.
 - Keeps group/channel memory injection disabled unless explicitly configured.
 
@@ -79,8 +82,12 @@ openclaw plugins doctor
 Then send a private message to OpenClaw. AIMemory API logs should show:
 
 ```text
+GET /v1/memories/categories
 POST /v1/memories/context
 ```
+
+If the model cannot choose a clear category, the plugin skips memory context for
+that turn instead of doing a cross-category search.
 
 ## Test
 

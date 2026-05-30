@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% set title = "分类 - AIMemory 管理后台" %}
+{% set heading = "分类" %}
+{% set subheading = "事务分类管理与合并" %}
+{% block content %}
+<section class="panel">
+  <form method="post" action="/admin/categories" class="filter-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>用户
+      <select name="user_id" required>
+        <option value="">选择用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>分类名称
+      <input name="name" maxlength="128" required placeholder="爱吃的水果">
+    </label>
+    <label>说明
+      <input name="description" placeholder="可选">
+    </label>
+    <button type="submit" class="primary">创建分类</button>
+  </form>
+</section>
+
+<section class="panel">
+  <form method="get" action="/admin/categories" class="filter-bar">
+    <label>用户
+      <select name="user_id">
+        <option value="">全部用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">筛选</button>
+  </form>
+</section>
+
+<section class="panel">
+  <table>
+    <thead>
+      <tr>
+        <th>用户</th>
+        <th>分类</th>
+        <th>说明</th>
+        <th>记忆数</th>
+        <th>修改</th>
+        <th>合并/删除</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set category = row.category %}
+      <tr>
+        <td><strong>{{ row.user_name }}</strong></td>
+        <td><strong>{{ category.name }}</strong></td>
+        <td>{{ category.description or "-" }}</td>
+        <td><span class="badge">{{ row.memory_count }}</span></td>
+        <td>
+          <form method="post" action="/admin/categories/{{ category.id }}/update" class="category-edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input name="name" value="{{ category.name }}" maxlength="128" required>
+            <input name="description" value="{{ category.description or '' }}" placeholder="说明">
+            <button type="submit">保存</button>
+          </form>
+        </td>
+        <td>
+          <div class="category-actions">
+            <form method="post" action="/admin/categories/{{ category.id }}/merge" class="category-merge-form" data-confirm="确认合并这个分类？源分类会被隐藏。">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <select name="target_category_id" required>
+                <option value="">目标分类</option>
+                {% for target in rows %}
+                {% if target.category.user_id == category.user_id and target.category.id != category.id %}
+                <option value="{{ target.category.id }}">{{ target.category.name }}</option>
+                {% endif %}
+                {% endfor %}
+              </select>
+              <button type="submit">合并</button>
+            </form>
+            <form method="post" action="/admin/categories/{{ category.id }}/delete" data-confirm="确认删除空分类？">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="danger">删除</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">暂无分类</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

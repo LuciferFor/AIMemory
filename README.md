@@ -1,9 +1,10 @@
 # AIMemory
 
 AIMemory is a FastAPI service for long-term AI memory. It stores memories by
-`user_id + agent_id`, supports idempotent writes through `external_id`, and
-searches with PostgreSQL full-text, trigram fuzzy matching, and local query
-tokenization. It does not require an external AI or embedding provider.
+`user_id + agent_id + category`, supports idempotent writes through
+`external_id`, and searches inside one memory category with PostgreSQL
+full-text, trigram fuzzy matching, and local query tokenization. It does not
+require an external AI or embedding provider.
 
 ## Stack
 
@@ -35,6 +36,7 @@ curl -X POST http://localhost:10011/v1/memories \
   -d '{
     "agent_id": "assistant",
     "external_id": "mem-001",
+    "category": "回答偏好",
     "title": "User likes concise answers",
     "content": "The user prefers direct answers with short implementation notes."
   }'
@@ -46,7 +48,14 @@ Search memory:
 curl -X POST http://localhost:10011/v1/memories/search \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
-  -d '{"agent_id":"assistant","query":"short replies preference","top_k":5}'
+  -d '{"agent_id":"assistant","category":"回答偏好","query":"short replies preference","top_k":5}'
+```
+
+List existing categories for the API user:
+
+```bash
+curl -X GET http://localhost:10011/v1/memories/categories \
+  -H "Authorization: Bearer <api_key>"
 ```
 
 Insert memory with an image attachment. AIMemory accepts base64 in the request,
@@ -60,6 +69,7 @@ curl -X POST http://localhost:10011/v1/memories \
   -d '{
     "agent_id": "assistant",
     "external_id": "image-memory-001",
+    "category": "视觉参考",
     "title": "Reference image",
     "content": "A reusable visual reference.",
     "attachments": [{
@@ -81,12 +91,14 @@ Build prompt-ready memory context:
 curl -X POST http://localhost:10011/v1/memories/context \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
-  -d '{"agent_id":"assistant","query":"short replies preference","top_k":8,"max_chars":3000}'
+  -d '{"agent_id":"assistant","category":"回答偏好","query":"short replies preference","top_k":8,"max_chars":3000}'
 ```
 
 The response includes `context_text`, which can be inserted into the model's
-system/developer context before the current user message. AIMemory does not call
-the main language model; clients still control the model request.
+system/developer context before the current user message. Clients should choose
+the category before calling this endpoint; AIMemory only searches within that
+category. AIMemory does not call the main language model; clients still control
+the model request.
 
 Get the standard write policy for extracting memories before context compression:
 
@@ -94,6 +106,10 @@ Get the standard write policy for extracting memories before context compression
 curl -X GET http://localhost:10011/v1/memories/write-policy \
   -H "Authorization: Bearer <api_key>"
 ```
+
+The write-policy response includes the current category list. Memory extraction
+clients should choose an existing category first, and create a short new category
+only when none fits.
 
 Delete memory:
 
@@ -183,10 +199,11 @@ The OpenClaw automatic memory plugin lives in:
 clients/openclaw-aimemory
 ```
 
-It is an OpenClaw native plugin that calls `/v1/memories/context` before model
-turns and injects the returned memory context. By default it runs for
-private/direct/DM sessions across all channels, while group/channel memory
-injection stays disabled for privacy.
+It is an OpenClaw native plugin that fetches the category list, asks the current
+OpenClaw model to choose one category, calls `/v1/memories/context`, and injects
+the returned memory context. By default it runs for private/direct/DM sessions
+across all channels, while group/channel memory injection stays disabled for
+privacy.
 
 Install it on an OpenClaw machine with:
 

@@ -23,4 +23,5 @@ class User(Base):
 
     api_keys = relationship("ApiKey", back_populates="user")
     memories = relationship("Memory", back_populates="user")
+    memory_categories = relationship("MemoryCategory", back_populates="user")
     search_stopwords = relationship("SearchStopword", back_populates="user")

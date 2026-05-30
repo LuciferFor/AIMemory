@@ -29,10 +29,16 @@ from aimemory.db.session import get_db
 from aimemory.models.api_key import ApiKey
 from aimemory.models.memory import Memory
 from aimemory.models.memory_attachment import MemoryAttachment
+from aimemory.models.memory_category import MemoryCategory
 from aimemory.models.request_log import RequestLog
 from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
 from aimemory.repositories.memories import get_attachment_for_admin, utcnow
+from aimemory.repositories.memory_categories import (
+    display_category_name,
+    get_or_create_category,
+    normalize_category_name,
+)
 from aimemory.repositories.search_stopwords import (
     add_default_search_stopwords,
     add_search_stopword,
@@ -44,7 +50,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260530-1940"
+ADMIN_ASSET_VERSION = "20260530-2020"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -480,10 +486,164 @@ async def revoke_api_key(api_key_id: uuid.UUID, request: Request, db: Session = 
     return redirect_to("/admin/api-keys", notice="接口密钥已吊销。")
 
 
+@router.get("/categories")
+def categories_page(
+    request: Request,
+    user_id: str = "",
+    db: Session = Depends(get_db),
+) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/categories", error="用户筛选参数无效。")
+
+    query = (
+        select(MemoryCategory, User.name.label("user_name"), func.count(Memory.id).label("memory_count"))
+        .join(User, User.id == MemoryCategory.user_id)
+        .outerjoin(Memory, (Memory.category_id == MemoryCategory.id) & (Memory.deleted_at.is_(None)))
+        .where(MemoryCategory.deleted_at.is_(None))
+        .group_by(MemoryCategory.id, User.name)
+        .order_by(User.name, MemoryCategory.name)
+    )
+    if selected_user_id:
+        query = query.where(MemoryCategory.user_id == selected_user_id)
+    rows = [
+        {"category": category, "user_name": user_name, "memory_count": int(memory_count or 0)}
+        for category, user_name, memory_count in db.execute(query).all()
+    ]
+    users = db.scalars(select(User).order_by(User.name)).all()
+    return templates.TemplateResponse(
+        request,
+        "categories.html",
+        base_context(
+            request,
+            session,
+            users=users,
+            rows=rows,
+            filters={"user_id": str(selected_user_id) if selected_user_id else ""},
+        ),
+    )
+
+
+@router.post("/categories")
+async def create_category(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    try:
+        user_id = uuid.UUID(form.get("user_id", ""))
+    except ValueError:
+        return redirect_to("/admin/categories", error="请选择用户。")
+    name = display_category_name(form.get("name", ""))
+    description = form.get("description", "").strip() or None
+    if not name:
+        return redirect_to("/admin/categories", user_id=str(user_id), error="分类名称不能为空。")
+    if len(name) > 128:
+        return redirect_to("/admin/categories", user_id=str(user_id), error="分类名称不能超过 128 个字符。")
+    user = db.get(User, user_id)
+    if user is None:
+        return redirect_to("/admin/categories", error="用户不存在。")
+    try:
+        get_or_create_category(db, user_id, name, description)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return redirect_to("/admin/categories", user_id=str(user_id), error="分类已存在。")
+    return redirect_to("/admin/categories", user_id=str(user_id), notice="分类已创建。")
+
+
+@router.post("/categories/{category_id}/update")
+async def update_category(category_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    category = db.get(MemoryCategory, category_id)
+    if category is None or category.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在。")
+    name = display_category_name(form.get("name", ""))
+    description = form.get("description", "").strip() or None
+    if not name:
+        return redirect_to("/admin/categories", user_id=str(category.user_id), error="分类名称不能为空。")
+    if len(name) > 128:
+        return redirect_to("/admin/categories", user_id=str(category.user_id), error="分类名称不能超过 128 个字符。")
+    category.name = name
+    category.normalized_name = normalize_category_name(name)
+    category.description = description
+    category.updated_at = utcnow()
+    db.add(category)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return redirect_to("/admin/categories", user_id=str(category.user_id), error="分类已存在。")
+    return redirect_to("/admin/categories", user_id=str(category.user_id), notice="分类已更新。")
+
+
+@router.post("/categories/{category_id}/delete")
+async def delete_category(category_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    category = db.get(MemoryCategory, category_id)
+    if category is None or category.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在。")
+    active_count = db.scalar(select(func.count(Memory.id)).where(Memory.category_id == category.id, Memory.deleted_at.is_(None))) or 0
+    if active_count:
+        return redirect_to("/admin/categories", user_id=str(category.user_id), error="分类下还有记忆，请先合并到其他分类。")
+    category.deleted_at = utcnow()
+    category.updated_at = utcnow()
+    db.add(category)
+    db.commit()
+    return redirect_to("/admin/categories", user_id=str(category.user_id), notice="分类已删除。")
+
+
+@router.post("/categories/{category_id}/merge")
+async def merge_category(category_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    source = db.get(MemoryCategory, category_id)
+    if source is None or source.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分类不存在。")
+    try:
+        target_id = uuid.UUID(form.get("target_category_id", ""))
+    except ValueError:
+        return redirect_to("/admin/categories", user_id=str(source.user_id), error="请选择目标分类。")
+    target = db.get(MemoryCategory, target_id)
+    if target is None or target.deleted_at is not None or target.user_id != source.user_id:
+        return redirect_to("/admin/categories", user_id=str(source.user_id), error="目标分类无效。")
+    if target.id == source.id:
+        return redirect_to("/admin/categories", user_id=str(source.user_id), error="不能合并到自身。")
+
+    now = utcnow()
+    for memory in db.scalars(select(Memory).where(Memory.category_id == source.id)).all():
+        memory.category_id = target.id
+        memory.updated_at = now
+        db.add(memory)
+    source.merged_into_id = target.id
+    source.deleted_at = now
+    source.updated_at = now
+    db.add(source)
+    db.commit()
+    return redirect_to("/admin/categories", user_id=str(source.user_id), notice="分类已合并。")
+
+
 @router.get("/memories")
 def memories_page(
     request: Request,
     user_id: str = "",
+    category_id: str = "",
     agent_id: str = "",
     q: str = "",
     deleted: str = Query(default="active", pattern="^(active|deleted|all)$"),
@@ -500,15 +660,23 @@ def memories_page(
         selected_user_id = parse_optional_uuid(user_id)
     except ValueError:
         return redirect_to("/admin/memories", error="用户筛选参数无效。")
+    try:
+        selected_category_id = parse_optional_uuid(category_id)
+    except ValueError:
+        return redirect_to("/admin/memories", error="分类筛选参数无效。")
 
     query = (
-        select(Memory, User.name.label("user_name"))
-        .join(User)
+        select(Memory, User.name.label("user_name"), MemoryCategory.name.label("category_name"))
+        .select_from(Memory)
+        .join(User, User.id == Memory.user_id)
+        .join(MemoryCategory, MemoryCategory.id == Memory.category_id)
         .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
         .order_by(Memory.updated_at.desc())
     )
     if selected_user_id:
         query = query.where(Memory.user_id == selected_user_id)
+    if selected_category_id:
+        query = query.where(Memory.category_id == selected_category_id)
     if agent_id.strip():
         query = query.where(Memory.agent_id == agent_id.strip())
     if deleted == "active":
@@ -536,11 +704,16 @@ def memories_page(
         {
             "memory": memory,
             "user_name": user_name,
+            "category_name": category_name,
             "attachments": [attachment for attachment in memory.attachments if attachment.deleted_at is None],
         }
-        for memory, user_name in db.execute(query.limit(limit)).all()
+        for memory, user_name, category_name in db.execute(query.limit(limit)).all()
     ]
     users = db.scalars(select(User).order_by(User.name)).all()
+    category_query = select(MemoryCategory).where(MemoryCategory.deleted_at.is_(None)).order_by(MemoryCategory.name)
+    if selected_user_id:
+        category_query = category_query.where(MemoryCategory.user_id == selected_user_id)
+    categories = db.scalars(category_query).all()
     agents = db.scalars(select(Memory.agent_id).distinct().order_by(Memory.agent_id)).all()
     return templates.TemplateResponse(
         request,
@@ -549,10 +722,12 @@ def memories_page(
             request,
             session,
             users=users,
+            categories=categories,
             agents=agents,
             rows=rows,
             filters={
                 "user_id": str(selected_user_id) if selected_user_id else "",
+                "category_id": str(selected_category_id) if selected_category_id else "",
                 "agent_id": agent_id,
                 "q": q,
                 "deleted": deleted,
@@ -647,14 +822,16 @@ def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Dep
         return session
 
     row = db.execute(
-        select(Memory, User.name.label("user_name"))
-        .join(User)
+        select(Memory, User.name.label("user_name"), MemoryCategory.name.label("category_name"))
+        .select_from(Memory)
+        .join(User, User.id == Memory.user_id)
+        .join(MemoryCategory, MemoryCategory.id == Memory.category_id)
         .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
         .where(Memory.id == memory_id)
     ).one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记忆不存在。")
-    memory, user_name = row
+    memory, user_name, category_name = row
     return templates.TemplateResponse(
         request,
         "memory_detail.html",
@@ -663,6 +840,7 @@ def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Dep
             session,
             memory=memory,
             user_name=user_name,
+            category_name=category_name,
             attachments=active_attachments(memory),
         ),
     )

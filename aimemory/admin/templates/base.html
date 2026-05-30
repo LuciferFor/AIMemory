@@ -17,6 +17,7 @@
         <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">仪表盘</a>
         <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') else '' }}">用户</a>
         <a href="/admin/api-keys" class="{{ 'active' if request.url.path.startswith('/admin/api-keys') else '' }}">接口密钥</a>
+        <a href="/admin/categories" class="{{ 'active' if request.url.path.startswith('/admin/categories') else '' }}">分类</a>
         <a href="/admin/memories" class="{{ 'active' if request.url.path.startswith('/admin/memories') else '' }}">记忆</a>
         <a href="/admin/search-stopwords" class="{{ 'active' if request.url.path.startswith('/admin/search-stopwords') else '' }}">停用词</a>
         <a href="/admin/request-logs" class="{{ 'active' if request.url.path.startswith('/admin/request-logs') else '' }}">请求日志</a>

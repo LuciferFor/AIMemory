@@ -442,7 +442,11 @@ th {
 }
 
 .memory-table .col-memory {
-  width: 42%;
+  width: 34%;
+}
+
+.memory-table .col-category {
+  width: 10%;
 }
 
 .memory-table .col-owner {
@@ -463,6 +467,24 @@ th {
 
 .memory-table .col-actions {
   width: 150px;
+}
+
+.category-edit-form,
+.category-merge-form,
+.category-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.category-edit-form input,
+.category-merge-form select {
+  min-width: 140px;
+}
+
+.category-actions {
+  flex-wrap: wrap;
 }
 
 .memory-table th:last-child,

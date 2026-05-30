@@ -24,6 +24,7 @@ class Memory(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("memory_categories.id"), nullable=False, index=True)
     agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
     external_id: Mapped[str] = mapped_column(String(256), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -44,5 +45,6 @@ class Memory(Base):
     deleted_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="memories")
+    category = relationship("MemoryCategory", back_populates="memories")
     embedding_jobs = relationship("EmbeddingJob", back_populates="memory")
     attachments = relationship("MemoryAttachment", back_populates="memory")

@@ -54,13 +54,14 @@ def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> d
         raise AIMemoryError(f"AIMemory HTTP {exc.code}: {detail}") from exc
 
 
-def search_memories(query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    """Search relevant memories before answering the user."""
+def search_memories(query: str, category: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """Search relevant memories in one category before answering the user."""
     response = _request(
         "POST",
         "/v1/memories/search",
         {
             "agent_id": AGENT_ID,
+            "category": category,
             "query": query,
             "top_k": top_k,
         },
@@ -68,13 +69,19 @@ def search_memories(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     return response.get("items", [])
 
 
-def build_server_memory_context(query: str, top_k: int = 8, max_chars: int = 3000) -> str:
+def build_server_memory_context(
+    query: str,
+    category: str,
+    top_k: int = 8,
+    max_chars: int = 3000,
+) -> str:
     """Ask AIMemory to return the standard prompt-ready memory context."""
     response = _request(
         "POST",
         "/v1/memories/context",
         {
             "agent_id": AGENT_ID,
+            "category": category,
             "query": query,
             "top_k": top_k,
             "max_chars": max_chars,
@@ -83,9 +90,9 @@ def build_server_memory_context(query: str, top_k: int = 8, max_chars: int = 300
     return response.get("context_text", "")
 
 
-def build_memory_context(query: str, top_k: int = 5) -> str:
+def build_memory_context(query: str, category: str, top_k: int = 5) -> str:
     """Return a compact context block that can be inserted into a model prompt."""
-    memories = search_memories(query, top_k=top_k)
+    memories = search_memories(query, category=category, top_k=top_k)
     if not memories:
         return ""
 
@@ -101,6 +108,7 @@ def build_memory_context(query: str, top_k: int = 5) -> str:
 def write_memory(
     title: str,
     content: str,
+    category: str,
     external_id: str | None = None,
     metadata: dict[str, Any] | None = None,
     attachments: list[dict[str, Any]] | None = None,
@@ -115,6 +123,7 @@ def write_memory(
         {
             "agent_id": AGENT_ID,
             "external_id": external_id,
+            "category": category,
             "title": title,
             "content": content,
             "metadata": metadata or {},
@@ -163,6 +172,12 @@ def get_write_policy() -> dict[str, Any]:
     return _request("GET", "/v1/memories/write-policy")
 
 
+def list_categories() -> list[dict[str, Any]]:
+    """Return existing memory categories for the current API user."""
+    response = _request("GET", "/v1/memories/categories")
+    return response.get("items", [])
+
+
 if __name__ == "__main__":
     # Tiny smoke example. Remove this block if your AI runtime imports the module.
-    print(build_server_memory_context("用户有什么偏好", top_k=3))
+    print(build_server_memory_context("用户有什么偏好", category="偏好", top_k=3))
