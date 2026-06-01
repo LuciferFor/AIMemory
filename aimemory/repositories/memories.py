@@ -1,8 +1,10 @@
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from typing import Any
 
 from sqlalchemy import select, text
@@ -17,7 +19,7 @@ from aimemory.services.attachments import (
     attachment_search_text,
     decode_attachment_inputs,
 )
-from aimemory.services.text import build_search_text, split_query_terms
+from aimemory.services.text import build_search_text, normalize_query, split_query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,11 @@ MIN_SEARCH_SCORE = 0.12
 HIGH_FREQUENCY_ABSOLUTE_MATCHES = 8
 HIGH_FREQUENCY_RATIO = 0.30
 HIGH_FREQUENCY_MIN_MATCHES = 3
+SIMILAR_MEMORY_DEDUPE_LIMIT = 300
+SIMILAR_MEMORY_MIN_SCORE = 0.88
+_DEDUPE_TEXT_RE = re.compile(r"[^\w\u4e00-\u9fff]+", re.UNICODE)
+_AUTO_MEMORY_SOURCES = {"conversation_compaction", "conversation_compression"}
+_AUTO_MEMORY_SOURCE_METADATA = {"openclaw_aimemory_plugin"}
 
 
 def utcnow() -> datetime:
@@ -74,26 +81,24 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
     )
 
     if existing:
-        existing.category_id = category.id
-        existing.title = payload.title
-        existing.content = payload.content
-        existing.metadata_json = payload.metadata
-        existing.occurred_at = payload.occurred_at
-        existing.embedding = None
-        existing.embedding_status = "disabled"
-        existing.embedding_error = None
-        existing.updated_at = utcnow()
-        db.add(existing)
-        db.flush()
-        if payload.attachments is not None:
-            _replace_attachments(db, existing, user_id, decoded_attachments)
-            attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
-        else:
-            attachment_text = attachment_search_text(_active_attachments(db, existing.id))
-        existing.search_text = build_search_text(payload.title, payload.content, attachment_text)
-        db.add(existing)
-        db.flush()
+        _update_memory_from_payload(db, existing, user_id, category.id, payload, decoded_attachments)
         return existing, "updated"
+
+    similar_existing = find_similar_auto_memory(db, user_id, category.id, payload)
+    if similar_existing:
+        _update_memory_from_payload(db, similar_existing, user_id, category.id, payload, decoded_attachments)
+        logger.info(
+            "memory.upsert.similar_dedupe",
+            extra={
+                "event": "memory.upsert.similar_dedupe",
+                "user_id": user_id,
+                "agent_id": payload.agent_id,
+                "incoming_external_id": payload.external_id,
+                "existing_external_id": similar_existing.external_id,
+                "memory_id": similar_existing.id,
+            },
+        )
+        return similar_existing, "updated"
 
     attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
     memory = Memory(
@@ -114,6 +119,126 @@ def upsert_memory(db: Session, user_id: uuid.UUID, payload: MemoryUpsertRequest)
         _add_attachments(db, memory, user_id, decoded_attachments)
         db.flush()
     return memory, "created"
+
+
+def _update_memory_from_payload(
+    db: Session,
+    memory: Memory,
+    user_id: uuid.UUID,
+    category_id: uuid.UUID,
+    payload: MemoryUpsertRequest,
+    decoded_attachments: list[DecodedAttachment],
+) -> None:
+    memory.category_id = category_id
+    memory.title = payload.title
+    memory.content = payload.content
+    memory.metadata_json = payload.metadata
+    memory.occurred_at = payload.occurred_at
+    memory.embedding = None
+    memory.embedding_status = "disabled"
+    memory.embedding_error = None
+    memory.updated_at = utcnow()
+    db.add(memory)
+    db.flush()
+    if payload.attachments is not None:
+        _replace_attachments(db, memory, user_id, decoded_attachments)
+        attachment_text = "\n".join(attachment.search_text for attachment in decoded_attachments)
+    else:
+        attachment_text = attachment_search_text(_active_attachments(db, memory.id))
+    memory.search_text = build_search_text(payload.title, payload.content, attachment_text)
+    db.add(memory)
+    db.flush()
+
+
+def find_similar_auto_memory(
+    db: Session,
+    user_id: uuid.UUID,
+    category_id: uuid.UUID,
+    payload: MemoryUpsertRequest,
+) -> Memory | None:
+    if not should_attempt_auto_memory_dedupe(payload):
+        return None
+    if payload.attachments:
+        return None
+
+    candidates = db.scalars(
+        select(Memory)
+        .options(defer(Memory.embedding))
+        .where(
+            Memory.user_id == user_id,
+            Memory.category_id == category_id,
+            Memory.agent_id == payload.agent_id,
+            Memory.deleted_at.is_(None),
+        )
+        .order_by(Memory.updated_at.desc())
+        .limit(SIMILAR_MEMORY_DEDUPE_LIMIT)
+    ).all()
+
+    best_memory: Memory | None = None
+    best_score = 0.0
+    for candidate in candidates:
+        score = duplicate_memory_score(payload.title, payload.content, candidate.title, candidate.content)
+        if score > best_score:
+            best_memory = candidate
+            best_score = score
+    return best_memory if best_memory is not None and best_score >= SIMILAR_MEMORY_MIN_SCORE else None
+
+
+def should_attempt_auto_memory_dedupe(payload: MemoryUpsertRequest) -> bool:
+    if str(payload.external_id or "").startswith("auto-"):
+        return True
+    metadata = payload.metadata if isinstance(payload.metadata, dict) else {}
+    if metadata.get("extract_reason"):
+        return True
+    if metadata.get("source") in _AUTO_MEMORY_SOURCES:
+        return True
+    source_metadata = metadata.get("source_metadata")
+    return isinstance(source_metadata, dict) and source_metadata.get("source") in _AUTO_MEMORY_SOURCE_METADATA
+
+
+def is_probable_duplicate_memory(title: str, content: str, existing_title: str, existing_content: str) -> bool:
+    return duplicate_memory_score(title, content, existing_title, existing_content) >= SIMILAR_MEMORY_MIN_SCORE
+
+
+def duplicate_memory_score(title: str, content: str, existing_title: str, existing_content: str) -> float:
+    title_score = _text_similarity(title, existing_title)
+    content_score = _text_similarity(content, existing_content)
+    combined_score = _text_similarity(f"{title}\n{content}", f"{existing_title}\n{existing_content}")
+    token_score = _token_overlap_score(f"{title}\n{content}", f"{existing_title}\n{existing_content}")
+    same_title = _dedupe_text(title) == _dedupe_text(existing_title)
+
+    if same_title and content_score >= 0.58:
+        return max(0.94, content_score, combined_score)
+    if title_score >= 0.92 and content_score >= 0.70:
+        return max(title_score, content_score, combined_score)
+    if combined_score >= 0.92:
+        return combined_score
+    if title_score >= 0.84 and token_score >= 0.78:
+        return max(token_score, combined_score)
+    return max(0.0, min(title_score, content_score), combined_score * 0.85, token_score * 0.8)
+
+
+def _text_similarity(left: str, right: str) -> float:
+    normalized_left = _dedupe_text(left)
+    normalized_right = _dedupe_text(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if normalized_left == normalized_right:
+        return 1.0
+    return SequenceMatcher(None, normalized_left, normalized_right).ratio()
+
+
+def _dedupe_text(value: str) -> str:
+    normalized = normalize_query(value)
+    return _DEDUPE_TEXT_RE.sub("", normalized)
+
+
+def _token_overlap_score(left: str, right: str) -> float:
+    left_terms = set(split_query_terms(left))
+    right_terms = set(split_query_terms(right))
+    if not left_terms or not right_terms:
+        return 0.0
+    return len(left_terms & right_terms) / max(len(left_terms), len(right_terms))
 
 
 def soft_delete_memory(db: Session, user_id: uuid.UUID, agent_id: str, external_id: str) -> bool:
