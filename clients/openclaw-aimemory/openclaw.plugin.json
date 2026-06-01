@@ -70,6 +70,20 @@
         "type": "boolean",
         "default": true
       },
+      "useBackendExtraction": {
+        "type": "boolean",
+        "default": true
+      },
+      "watchCodexCompaction": {
+        "type": "boolean",
+        "default": true
+      },
+      "compactionWatcherIntervalMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 600000,
+        "default": 5000
+      },
       "includePromptInMemoryQuery": {
         "type": "boolean",
         "description": "Deprecated compatibility flag. Retrieval uses current user input only.",

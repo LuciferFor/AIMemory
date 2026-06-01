@@ -54,7 +54,8 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
     entries = plugins.setdefault("entries", {})
     entry = entries.setdefault("aimemory", {})
     entry["enabled"] = True
-    entry.setdefault("hooks", {})
+    hooks = entry.setdefault("hooks", {})
+    hooks["allowConversationAccess"] = True
     plugin_config = entry.setdefault("config", {})
     plugin_config.update(
         {
@@ -68,6 +69,9 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
             "timeoutMs": args.timeout_ms,
             "saveOnExplicitRemember": True,
             "saveBeforeCompaction": True,
+            "useBackendExtraction": True,
+            "watchCodexCompaction": True,
+            "compactionWatcherIntervalMs": 5000,
             "includePromptInMemoryQuery": False,
             "includeUnstructuredTranscriptForCompaction": False,
             "logging": True,

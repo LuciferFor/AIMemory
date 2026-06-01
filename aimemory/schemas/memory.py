@@ -154,6 +154,26 @@ class MemoryWritePolicyResponse(BaseModel):
     categories: list[MemoryCategoryItem] = Field(default_factory=list)
 
 
+class MemoryExtractRequest(BaseModel):
+    agent_id: AgentId
+    transcript: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200000)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)] = "conversation_compaction"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryExtractItem(BaseModel):
+    external_id: str
+    category: str
+    title: str
+    action: str
+
+
+class MemoryExtractResponse(BaseModel):
+    extracted: int
+    written: int
+    items: list[MemoryExtractItem] = Field(default_factory=list)
+
+
 class MemoryDeleteRequest(BaseModel):
     agent_id: AgentId
     external_id: ExternalId

@@ -15,6 +15,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   timeoutMs: 3000,
   saveOnExplicitRemember: true,
   saveBeforeCompaction: true,
+  useBackendExtraction: true,
+  watchCodexCompaction: true,
+  compactionWatcherIntervalMs: 5000,
   includePromptInMemoryQuery: false,
   includeUnstructuredTranscriptForCompaction: false,
   logging: true,
@@ -139,9 +142,17 @@ export function resolveConfig(pluginConfig = {}, options = {}) {
     topK: clampInteger(merged.topK, DEFAULT_CONFIG.topK, 1, 50),
     maxChars: clampInteger(merged.maxChars, DEFAULT_CONFIG.maxChars, 0, 12000),
     timeoutMs: clampInteger(merged.timeoutMs, DEFAULT_CONFIG.timeoutMs, 500, 600000),
+    compactionWatcherIntervalMs: clampInteger(
+      merged.compactionWatcherIntervalMs,
+      DEFAULT_CONFIG.compactionWatcherIntervalMs,
+      1000,
+      600000,
+    ),
     enabled: merged.enabled !== false,
     saveOnExplicitRemember: merged.saveOnExplicitRemember !== false,
     saveBeforeCompaction: merged.saveBeforeCompaction !== false,
+    useBackendExtraction: merged.useBackendExtraction !== false,
+    watchCodexCompaction: merged.watchCodexCompaction !== false,
     includePromptInMemoryQuery: merged.includePromptInMemoryQuery === true,
     includeUnstructuredTranscriptForCompaction:
       merged.includeUnstructuredTranscriptForCompaction === true,
@@ -247,6 +258,57 @@ function collectConversationMessages(event = {}) {
   for (const source of sources) {
     if (Array.isArray(source)) {
       messages.push(...source);
+    }
+  }
+  return messages;
+}
+
+function extractSessionMessageCandidate(record = {}) {
+  const candidates = [
+    record.item,
+    record.message,
+    record.data?.item,
+    record.data?.message,
+    record.payload?.item,
+    record.payload?.message,
+    record,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const role = messageRole(candidate);
+    if (isConversationRole(role) && extractText(candidate).trim()) {
+      return candidate;
+    }
+    const type = String(candidate.type || candidate.kind || "").trim().toLowerCase();
+    if (type === "user_message" || type === "assistant_message") {
+      const inferredRole = type === "user_message" ? "user" : "assistant";
+      return {
+        role: inferredRole,
+        content: candidate.message || candidate.text || candidate.content,
+      };
+    }
+  }
+  return null;
+}
+
+export function parseSessionJsonlMessages(text) {
+  const messages = [];
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = extractSessionMessageCandidate(record);
+    if (message) {
+      messages.push(message);
     }
   }
   return messages;
@@ -387,6 +449,33 @@ export function buildCleanCompactionTranscript(event = {}, maxChars = 12000, opt
   }
 
   return lines.join("\n").slice(-maxChars).trim();
+}
+
+export function buildCleanCompactionTranscriptFromSessionText(text, maxChars = 12000) {
+  return buildCleanCompactionTranscript(
+    { messages: parseSessionJsonlMessages(text) },
+    maxChars,
+  );
+}
+
+export function buildCleanCompactionTranscriptFromSessionFile(
+  sessionFile,
+  maxChars = 12000,
+  options = {},
+) {
+  const resolved = expandHome(String(sessionFile || ""));
+  if (!resolved) {
+    return "";
+  }
+  const readFile = options.readFile || readFileSync;
+  try {
+    return buildCleanCompactionTranscriptFromSessionText(readFile(resolved, "utf8"), maxChars);
+  } catch (error) {
+    if (options.throwOnReadError === true) {
+      throw error;
+    }
+    return "";
+  }
 }
 
 export function buildTranscriptText(event = {}, maxChars = 12000) {

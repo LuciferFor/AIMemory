@@ -242,6 +242,11 @@ def parse_json_object(value: str, field_name: str) -> dict[str, Any]:
 
 def ai_config_view(config: LlmProviderConfig | None) -> dict[str, Any]:
     defaults = default_config_values()
+    review_prompt_injection = (
+        getattr(config, "review_prompt_injection", defaults["review_prompt_injection"])
+        if config
+        else defaults["review_prompt_injection"]
+    )
     return {
         "base_url": config.base_url if config else defaults["base_url"],
         "model": config.model if config else defaults["model"],
@@ -251,6 +256,7 @@ def ai_config_view(config: LlmProviderConfig | None) -> dict[str, Any]:
         "max_output_tokens": config.max_output_tokens if config else defaults["max_output_tokens"],
         "temperature": config.temperature if config else defaults["temperature"],
         "extra_body_json": json.dumps(config.extra_body_json if config else defaults["extra_body_json"], ensure_ascii=False, indent=2),
+        "review_prompt_injection": review_prompt_injection or "",
         "enabled": config.enabled if config else defaults["enabled"],
         "query_analysis_enabled": getattr(config, "query_analysis_enabled", defaults["query_analysis_enabled"]) if config else defaults["query_analysis_enabled"],
         "query_analysis_max_output_tokens": getattr(
@@ -672,10 +678,13 @@ async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
 
     base_url = form.get("base_url", "").strip().rstrip("/")
     model = form.get("model", "").strip()
+    review_prompt_injection = form.get("review_prompt_injection", "").strip()
     if not base_url:
         return redirect_to("/admin/ai-settings", error="Base URL 不能为空。")
     if not model:
         return redirect_to("/admin/ai-settings", error="模型不能为空。")
+    if len(review_prompt_injection) > 8000:
+        return redirect_to("/admin/ai-settings", error="整理前置注入提示不能超过 8000 字。")
 
     config = get_llm_config(db) or create_default_llm_config()
     config.base_url = base_url
@@ -684,6 +693,7 @@ async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
     config.max_output_tokens = max_output_tokens
     config.temperature = temperature
     config.extra_body_json = extra_body_json
+    config.review_prompt_injection = review_prompt_injection
     config.enabled = form.get("enabled") == "on"
     config.query_analysis_enabled = form.get("query_analysis_enabled") == "on"
     config.query_analysis_max_output_tokens = query_analysis_max_output_tokens

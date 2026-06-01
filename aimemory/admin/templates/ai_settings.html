@@ -27,6 +27,9 @@
     <label class="wide">扩展请求体 JSON
       <textarea name="extra_body_json" rows="6">{{ config.extra_body_json }}</textarea>
     </label>
+    <label class="wide">整理前置注入提示
+      <textarea name="review_prompt_injection" class="prompt-textarea" rows="7">{{ config.review_prompt_injection }}</textarea>
+    </label>
     <label class="checkbox-line">
       <input type="checkbox" name="enabled" {{ "checked" if config.enabled else "" }}>
       启用 AI 整理

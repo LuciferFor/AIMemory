@@ -20,6 +20,7 @@ class LlmProviderConfig(Base):
     max_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096, server_default="4096")
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     extra_body_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    review_prompt_injection: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     query_analysis_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     query_analysis_max_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=256, server_default="256")

@@ -19,6 +19,15 @@ from aimemory.services.openai_compatible import chat_completion
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_EXTRA_BODY = {"thinking": {"type": "disabled"}}
+DEFAULT_REVIEW_PROMPT_INJECTION = (
+    "整理长期记忆时请遵循：\n"
+    "1. 先判断每条记忆的长期价值，只提出必要、低风险的整理建议。\n"
+    "2. 保留具体事实、偏好、约束、关系、项目背景和可执行指令；删除口水话、重复表达、临时状态和过期上下文。\n"
+    "3. rewrite 要让标题简短明确，正文自然、可检索，并保持第三方视角。\n"
+    "4. merge 只用于事实高度重复或互补的记忆，目标记忆选择信息最完整的一条。\n"
+    "5. move_category 优先使用已有分类；只有明显不合适时才提出新分类。\n"
+    "6. soft_delete 仅用于明显无价值、错误、过期或已被其他记忆完整覆盖的内容。"
+)
 ALLOWED_SUGGESTION_TYPES = {"rewrite", "merge", "move_category", "soft_delete"}
 MAX_REVIEW_MEMORIES = 50
 
@@ -36,6 +45,7 @@ def default_config_values() -> dict[str, Any]:
         "max_output_tokens": 4096,
         "temperature": 0.0,
         "extra_body_json": DEFAULT_EXTRA_BODY,
+        "review_prompt_injection": DEFAULT_REVIEW_PROMPT_INJECTION,
         "enabled": True,
         "query_analysis_enabled": True,
         "query_analysis_max_output_tokens": 256,
@@ -67,31 +77,41 @@ def memory_summary(memory: Memory, category_name: str, user_name: str = "") -> d
     }
 
 
-def build_review_messages(memories: list[dict[str, Any]], categories: list[str]) -> list[dict[str, str]]:
+def build_review_messages(
+    memories: list[dict[str, Any]],
+    categories: list[str],
+    prompt_injection: str = "",
+) -> list[dict[str, str]]:
     category_text = "\n".join(f"- {category}" for category in categories) or "- 未分类"
     payload = {
         "categories": categories,
         "memories": memories,
     }
+    fixed_system_prompt = (
+        "你是 AIMemory 后台的长期记忆整理助手。请阅读管理员选中的记忆，输出 json。"
+        "任务是生成谨慎的整理建议，不要直接回答用户，不要编造新事实。"
+        "支持建议类型：rewrite、merge、move_category、soft_delete。"
+        "rewrite 用于压缩/改写单条记忆；merge 用于合并重复或高度相似记忆；"
+        "move_category 用于调整分类；soft_delete 用于明显无价值或重复的删除候选。"
+        "除非明显重复或无价值，不要建议删除。"
+        "标题和正文必须使用第三方视角，例如“用户偏好……”“助手应……”。"
+        "优先使用已有分类；确实没有合适分类时可以给出新分类名。"
+        "只输出 JSON 对象，不要输出解释。"
+        "\n\nJSON 输出格式："
+        "{\"suggestions\":[{\"type\":\"rewrite|merge|move_category|soft_delete\","
+        "\"confidence\":0.0,\"reason\":\"原因\",\"memory_ids\":[\"uuid\"],"
+        "\"target_memory_id\":\"uuid\",\"proposed\":{\"title\":\"\",\"content\":\"\",\"category\":\"\"}}]}"
+        f"\n\n已有分类：\n{category_text}"
+    )
+    system_sections = []
+    cleaned_prompt_injection = str(prompt_injection or "").strip()
+    if cleaned_prompt_injection:
+        system_sections.append(f"管理员整理前置注入提示：\n{cleaned_prompt_injection}")
+    system_sections.append(fixed_system_prompt)
     return [
         {
             "role": "system",
-            "content": (
-                "你是 AIMemory 后台的长期记忆整理助手。请阅读管理员选中的记忆，输出 json。"
-                "任务是生成谨慎的整理建议，不要直接回答用户，不要编造新事实。"
-                "支持建议类型：rewrite、merge、move_category、soft_delete。"
-                "rewrite 用于压缩/改写单条记忆；merge 用于合并重复或高度相似记忆；"
-                "move_category 用于调整分类；soft_delete 用于明显无价值或重复的删除候选。"
-                "除非明显重复或无价值，不要建议删除。"
-                "标题和正文必须使用第三方视角，例如“用户偏好……”“助手应……”。"
-                "优先使用已有分类；确实没有合适分类时可以给出新分类名。"
-                "只输出 JSON 对象，不要输出解释。"
-                "\n\nJSON 输出格式："
-                "{\"suggestions\":[{\"type\":\"rewrite|merge|move_category|soft_delete\","
-                "\"confidence\":0.0,\"reason\":\"原因\",\"memory_ids\":[\"uuid\"],"
-                "\"target_memory_id\":\"uuid\",\"proposed\":{\"title\":\"\",\"content\":\"\",\"category\":\"\"}}]}"
-                f"\n\n已有分类：\n{category_text}"
-            ),
+            "content": "\n\n".join(system_sections),
         },
         {
             "role": "user",
@@ -145,10 +165,11 @@ def create_review_run(
     db.flush()
 
     try:
+        prompt_injection = getattr(config, "review_prompt_injection", "") or ""
         result = chat_completion(
             config,
             api_key,
-            build_review_messages(memory_payload, categories),
+            build_review_messages(memory_payload, categories, prompt_injection),
             response_format={"type": "json_object"},
         )
         suggestions = normalize_suggestions(result.content, {item["memory_id"] for item in memory_payload})

@@ -48,6 +48,16 @@ The installer:
 
 Restart OpenClaw gateway after installation.
 
+For OpenClaw builds where manual Codex app-server compaction does not fire
+plugin compaction hooks, patch the bundled Codex compaction bridge inside the
+gateway container:
+
+```bash
+python3 /home/node/.openclaw/plugins/aimemory/patch_codex_appserver_compaction.py --app-root /app
+```
+
+Then restart the gateway container.
+
 ## Configuration
 
 The installer writes:
@@ -58,6 +68,9 @@ The installer writes:
     "entries": {
       "aimemory": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "enabled": true,
           "baseUrl": "http://192.168.31.11:10011",
@@ -69,6 +82,9 @@ The installer writes:
           "timeoutMs": 3000,
           "saveOnExplicitRemember": true,
           "saveBeforeCompaction": true,
+          "useBackendExtraction": true,
+          "watchCodexCompaction": true,
+          "compactionWatcherIntervalMs": 5000,
           "includePromptInMemoryQuery": false,
           "includeUnstructuredTranscriptForCompaction": false,
           "logging": true

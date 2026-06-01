@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildCategorySelectionMessages,
   buildCleanCompactionTranscript,
+  buildCleanCompactionTranscriptFromSessionFile,
   buildCleanMemoryQueryFromTurn,
   buildExtractionMessages,
   buildQueryFromTurn,
@@ -15,6 +16,7 @@ import {
   normalizeExtractedMemories,
   parseSelectedCategory,
   parseEnvText,
+  parseSessionJsonlMessages,
   resolveConfig,
   stableExternalId,
 } from "../lib/core.mjs";
@@ -151,6 +153,36 @@ test("clean compaction transcript uses only structured dialogue by default", () 
     ),
     /只有纯 transcript/,
   );
+});
+
+const codexSessionJsonl = [
+  JSON.stringify({ type: "session_meta", timestamp: "2026-06-01T00:00:00Z" }),
+  JSON.stringify({
+    type: "response_item",
+    item: { type: "message", role: "user", content: [{ type: "input_text", text: "我喜欢苹果" }] },
+  }),
+  JSON.stringify({
+    type: "response_item",
+    item: { type: "function_call", name: "tool", arguments: "不要进入记忆" },
+  }),
+  JSON.stringify({
+    type: "response_item",
+    item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "好的" }] },
+  }),
+].join("\n");
+
+test("clean compaction transcript can read Codex session JSONL", () => {
+  const messages = parseSessionJsonlMessages(codexSessionJsonl);
+  const transcript = buildCleanCompactionTranscriptFromSessionFile("/tmp/session.jsonl", 12000, {
+    readFile() {
+      return codexSessionJsonl;
+    },
+  });
+
+  assert.equal(messages.length, 2);
+  assert.match(transcript, /user: 我喜欢苹果/);
+  assert.match(transcript, /assistant: 好的/);
+  assert.doesNotMatch(transcript, /不要进入记忆/);
 });
 
 test("extraction prompt asks for third-person memory wording", () => {
@@ -482,6 +514,231 @@ test("runtime compaction skips unstructured prompt and transcript", async () => 
 
   assert.deepEqual(result, {});
   assert.equal(fetchCalls, 0);
+});
+
+test("runtime compaction extracts from sessionFile when hook event has no messages", async () => {
+  const handlers = {};
+  const writeBodies = [];
+  let extractionPrompt = "";
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete(request) {
+          extractionPrompt = request.messages.at(-1).content;
+          return JSON.stringify([
+            {
+              category: "回答偏好",
+              title: "水果偏好",
+              content: "用户喜欢苹果。",
+            },
+          ]);
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    readFile() {
+      return codexSessionJsonl;
+    },
+    fetchImpl: async (url, request = {}) => {
+      if (url.endsWith("/v1/memories/write-policy")) {
+        return new Response(
+          JSON.stringify({
+            prompt: "提取长期记忆。",
+            categories: [{ name: "回答偏好" }],
+            output_schema: { category: "string", title: "string", content: "string" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/v1/memories") && request.method === "POST") {
+        writeBodies.push(JSON.parse(request.body));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${request.method || "GET"} ${url}`);
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  const result = await handlers.before_compaction(
+    {
+      sessionFile: "/tmp/session.jsonl",
+      chatType: "direct",
+      messageCount: -1,
+      context: { pluginConfig: { useBackendExtraction: false } },
+    },
+    {},
+  );
+
+  assert.deepEqual(result, {});
+  assert.match(extractionPrompt, /user: 我喜欢苹果/);
+  assert.equal(writeBodies.length, 1);
+  assert.equal(writeBodies[0].agent_id, "agent");
+  assert.equal(writeBodies[0].content, "用户喜欢苹果。");
+});
+
+test("runtime compaction infers sessionFile from hook context", async () => {
+  const handlers = {};
+  const readPaths = [];
+  const writeBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return JSON.stringify([
+            {
+              category: "回答偏好",
+              title: "水果偏好",
+              content: "用户喜欢苹果。",
+            },
+          ]);
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    readFile(filePath) {
+      readPaths.push(filePath);
+      return codexSessionJsonl;
+    },
+    fetchImpl: async (url, request = {}) => {
+      if (url.endsWith("/v1/memories/write-policy")) {
+        return new Response(
+          JSON.stringify({
+            prompt: "提取长期记忆。",
+            categories: [{ name: "回答偏好" }],
+            output_schema: { category: "string", title: "string", content: "string" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/v1/memories") && request.method === "POST") {
+        writeBodies.push(JSON.parse(request.body));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${request.method || "GET"} ${url}`);
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_compaction(
+    {
+      chatType: "direct",
+      messageCount: 12,
+      context: { pluginConfig: { useBackendExtraction: false } },
+    },
+    { agentId: "main", sessionId: "session-123", sessionKey: "agent:main:test" },
+  );
+
+  assert.match(readPaths[0], /\.openclaw\/agents\/main\/sessions\/session-123\.jsonl$/);
+  assert.equal(writeBodies.length, 1);
+});
+
+test("runtime after_compaction fallback writes when before hook had no transcript", async () => {
+  const handlers = {};
+  const writeBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return JSON.stringify([
+            {
+              category: "回答偏好",
+              title: "水果偏好",
+              content: "用户喜欢苹果。",
+            },
+          ]);
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    readFile(filePath) {
+      if (String(filePath).includes("missing")) {
+        const error = new Error("missing");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return codexSessionJsonl;
+    },
+    fetchImpl: async (url, request = {}) => {
+      if (url.endsWith("/v1/memories/write-policy")) {
+        return new Response(
+          JSON.stringify({
+            prompt: "提取长期记忆。",
+            categories: [{ name: "回答偏好" }],
+            output_schema: { category: "string", title: "string", content: "string" },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/v1/memories") && request.method === "POST") {
+        writeBodies.push(JSON.parse(request.body));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${request.method || "GET"} ${url}`);
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_compaction(
+    {
+      sessionFile: "/tmp/missing.jsonl",
+      chatType: "direct",
+      context: { pluginConfig: { useBackendExtraction: false } },
+    },
+    { sessionId: "session-123" },
+  );
+  await handlers.after_compaction(
+    {
+      sessionFile: "/tmp/session.jsonl",
+      chatType: "direct",
+      context: { pluginConfig: { useBackendExtraction: false } },
+    },
+    { sessionId: "session-123" },
+  );
+
+  assert.equal(writeBodies.length, 1);
+  assert.equal(writeBodies[0].content, "用户喜欢苹果。");
 });
 
 test("explicit remember intent is detected", () => {

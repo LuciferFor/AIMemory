@@ -1,5 +1,6 @@
 import json
 import logging
+import hashlib
 import time
 from typing import Any
 from uuid import UUID
@@ -29,6 +30,9 @@ from aimemory.schemas.memory import (
     MemoryContextResponse,
     MemoryDeleteRequest,
     MemoryDeleteResponse,
+    MemoryExtractItem,
+    MemoryExtractRequest,
+    MemoryExtractResponse,
     MemoryAttachmentMeta,
     MemoryCategoriesResponse,
     MemoryCategoryItem,
@@ -43,6 +47,7 @@ from aimemory.schemas.memory import (
 from aimemory.services.attachments import AttachmentValidationError
 from aimemory.services.ai_crypto import decrypt_secret
 from aimemory.services.ai_memory_review import get_llm_config
+from aimemory.services.openai_compatible import chat_completion
 from aimemory.services.query_analysis import QueryAnalysis, analyze_memory_query, effective_terms_from_ai_keywords
 from aimemory.services.text import filter_query_terms, normalize_query
 
@@ -114,6 +119,23 @@ WRITE_POLICY_OUTPUT_SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+EXTRACT_MEMORY_SYSTEM_PROMPT = (
+    "你是 AIMemory 的长期记忆提取器。请从对话 transcript 中提取值得未来复用的长期记忆。"
+    "只保存稳定事实、偏好、约束、关系、项目背景、工作流和长期指令；不要保存临时闲聊、重复表达、"
+    "密码、密钥、访问令牌、sudo 密码或敏感凭据。"
+    "每条记忆必须使用第三方视角，例如“用户偏好……”“助手应……”。"
+    "优先使用已有分类；没有合适分类时可以创建简短明确的新分类。"
+    "只输出 JSON 对象，不要输出解释。"
+    "\n\nJSON 输出格式："
+    "{\"memories\":[{\"external_id\":\"稳定 slug，可省略\","
+    "\"category\":\"分类\",\"title\":\"简短标题\",\"content\":\"完整但精炼的正文\","
+    "\"metadata\":{\"scope\":\"全局|私聊|群聊|工作流\",\"priority\":\"高|普通|低\",\"tags\":[\"关键词\"]},"
+    "\"occurred_at\":null}]}"
+)
+
+RECENT_EXTRACT_REQUESTS: dict[str, float] = {}
+EXTRACT_DEDUPE_TTL_SECONDS = 120
 
 
 @router.post("", response_model=MemoryUpsertResponse)
@@ -308,6 +330,103 @@ def get_write_policy(
         forbidden=WRITE_POLICY_FORBIDDEN,
         categories=[category_item(category) for category in list_category_summaries(db, current_user.id)],
     )
+
+
+@router.post("/extract", response_model=MemoryExtractResponse)
+def extract_memory_from_transcript(
+    request: Request,
+    payload: MemoryExtractRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemoryExtractResponse:
+    dedupe_key = extract_request_dedupe_key(current_user.id, payload)
+    now = time.time()
+    prune_recent_extract_requests(now)
+    if now - RECENT_EXTRACT_REQUESTS.get(dedupe_key, 0) < EXTRACT_DEDUPE_TTL_SECONDS:
+        response = MemoryExtractResponse(extracted=0, written=0, items=[])
+        request.state.request_log_response_summary = {
+            "type": "extract",
+            "agent_id": payload.agent_id,
+            "reason": payload.reason,
+            "transcript_chars": len(payload.transcript),
+            "deduplicated": True,
+            "extracted": 0,
+            "written": 0,
+        }
+        return response
+    RECENT_EXTRACT_REQUESTS[dedupe_key] = now
+
+    config = get_llm_config(db)
+    if not config or not getattr(config, "enabled", False):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI 配置未启用。")
+    if not getattr(config, "encrypted_api_key", None):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI API Key 未配置。")
+
+    api_key = decrypt_secret(config.encrypted_api_key, get_settings().ai_config_encryption_secret)
+    categories = [category.name for category in list_category_summaries(db, current_user.id)]
+    result = chat_completion(
+        config,
+        api_key,
+        build_extract_memory_messages(payload.transcript, categories, payload.reason),
+        response_format={"type": "json_object"},
+        max_tokens=1400,
+        temperature=0.1,
+        timeout_ms=max(int(getattr(config, "timeout_ms", 30000) or 30000), 30000),
+    )
+    candidates = normalize_extracted_memory_candidates(result.content, payload.reason, payload.metadata)
+    written_items: list[MemoryExtractItem] = []
+    for candidate in candidates:
+        try:
+            memory_payload = MemoryUpsertRequest(agent_id=payload.agent_id, **candidate)
+            _memory, action = upsert_memory(db, current_user.id, memory_payload)
+            db.commit()
+            written_items.append(
+                MemoryExtractItem(
+                    external_id=memory_payload.external_id,
+                    category=memory_payload.category,
+                    title=memory_payload.title,
+                    action=action,
+                )
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "memory.extract.item_skipped",
+                extra={
+                    "event": "memory.extract.item_skipped",
+                    "user_id": current_user.id,
+                    "agent_id": payload.agent_id,
+                    "external_id": candidate.get("external_id"),
+                    "reason": str(exc)[:300],
+                },
+            )
+
+    response = MemoryExtractResponse(extracted=len(candidates), written=len(written_items), items=written_items)
+    request.state.request_log_response_summary = {
+        "type": "extract",
+        "agent_id": payload.agent_id,
+        "reason": payload.reason,
+        "transcript_chars": len(payload.transcript),
+        "extracted": response.extracted,
+        "written": response.written,
+        "items": [item.model_dump() for item in response.items[:20]],
+    }
+    logger.info(
+        "memory.extract",
+        extra={
+            "event": "memory.extract",
+            "user_id": current_user.id,
+            "agent_id": payload.agent_id,
+            "reason": payload.reason,
+            "transcript_chars": len(payload.transcript),
+            "extracted": response.extracted,
+            "written": response.written,
+            "prompt_tokens": result.usage.get("prompt_tokens"),
+            "completion_tokens": result.usage.get("completion_tokens"),
+            "total_tokens": result.usage.get("total_tokens"),
+        },
+    )
+    return response
 
 
 @router.get("/attachments/{attachment_id}")
@@ -618,6 +737,165 @@ def preview_text(value: object, max_chars: int) -> str:
 def preview_multiline_text(value: object, max_chars: int) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     return text if len(text) <= max_chars else text[:max_chars].rstrip()
+
+
+def build_extract_memory_messages(transcript: str, categories: list[str], reason: str) -> list[dict[str, str]]:
+    category_text = "\n".join(f"- {category}" for category in categories) or "- 未分类"
+    return [
+        {
+            "role": "system",
+            "content": f"{EXTRACT_MEMORY_SYSTEM_PROMPT}\n\n已有分类：\n{category_text}",
+        },
+        {
+            "role": "user",
+            "content": (
+                f"提取原因：{reason}\n\n"
+                "请从下面 transcript 提取长期记忆，输出 JSON：\n"
+                f"{transcript[:120000]}"
+            ),
+        },
+    ]
+
+
+def extract_request_dedupe_key(user_id: UUID, payload: MemoryExtractRequest) -> str:
+    digest = hashlib.sha256(payload.transcript.encode("utf-8")).hexdigest()
+    return f"{user_id}:{payload.agent_id}:{payload.reason}:{digest}"
+
+
+def prune_recent_extract_requests(now: float) -> None:
+    expired = [
+        key
+        for key, created_at in RECENT_EXTRACT_REQUESTS.items()
+        if now - created_at >= EXTRACT_DEDUPE_TTL_SECONDS
+    ]
+    for key in expired:
+        RECENT_EXTRACT_REQUESTS.pop(key, None)
+
+
+def normalize_extracted_memory_candidates(
+    content: str,
+    reason: str,
+    source_metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    parsed = parse_extracted_memory_json(content)
+    candidates: list[dict[str, Any]] = []
+    for raw in parsed:
+        if not isinstance(raw, dict):
+            continue
+        category = clean_extracted_text(raw.get("category"), 128)
+        title = clean_extracted_text(raw.get("title"), 512)
+        memory_content = clean_extracted_text(raw.get("content"), 20000)
+        if not category or not title or not memory_content:
+            continue
+        if contains_forbidden_memory_text(title, memory_content, category):
+            continue
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        metadata = {
+            **metadata,
+            "source": metadata.get("source") or "conversation_compaction",
+            "extract_reason": reason,
+            "source_metadata": source_metadata,
+        }
+        external_id = clean_external_id(raw.get("external_id")) or stable_memory_external_id(
+            category,
+            title,
+            memory_content,
+        )
+        candidates.append(
+            {
+                "external_id": external_id,
+                "category": category,
+                "title": title,
+                "content": memory_content,
+                "metadata": metadata,
+                "occurred_at": raw.get("occurred_at") or raw.get("occurredAt"),
+            }
+        )
+    return candidates
+
+
+def parse_extracted_memory_json(content: str) -> list[Any]:
+    text = str(content or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    array_start = text.find("[")
+    array_end = text.rfind("]")
+    if array_start >= 0 and array_end > array_start:
+        candidates.append(text[array_start : array_end + 1])
+    object_start = text.find("{")
+    object_end = text.rfind("}")
+    if object_start >= 0 and object_end > object_start:
+        candidates.append(text[object_start : object_end + 1])
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            for key in ("memories", "items", "results"):
+                items = parsed.get(key)
+                if isinstance(items, list):
+                    return items
+    if last_error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 返回不是合法 JSON。") from last_error
+    return []
+
+
+def clean_extracted_text(value: object, max_chars: int) -> str:
+    return " ".join(str(value or "").split()).strip()[:max_chars]
+
+
+def clean_external_id(value: object) -> str:
+    text = str(value or "").strip().lower()
+    cleaned = []
+    prev_dash = False
+    for char in text:
+        allowed = char.isascii() and (char.isalnum() or char in "_.:-")
+        if allowed:
+            cleaned.append(char)
+            prev_dash = False
+            continue
+        if not prev_dash:
+            cleaned.append("-")
+            prev_dash = True
+    return "".join(cleaned).strip("-")[:180]
+
+
+def stable_memory_external_id(category: str, title: str, content: str) -> str:
+    category_slug = clean_external_id(category) or "memory"
+    digest = hashlib.sha256(f"{title}\n{content}".encode("utf-8")).hexdigest()[:12]
+    return f"auto-{category_slug}-{digest}"
+
+
+def contains_forbidden_memory_text(*values: object) -> bool:
+    text = "\n".join(str(value or "") for value in values).lower()
+    forbidden = [
+        "password",
+        "passwd",
+        "api key",
+        "apikey",
+        "secret",
+        "token",
+        "private key",
+        "sudo",
+        "密码",
+        "密钥",
+        "私钥",
+        "令牌",
+        "口令",
+    ]
+    return any(term in text for term in forbidden)
 
 
 def attachment_meta(attachment: SearchAttachment) -> MemoryAttachmentMeta:

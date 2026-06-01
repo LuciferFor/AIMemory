@@ -258,6 +258,7 @@ class _AiReviewDb(_MemoryDb):
             max_output_tokens=4096,
             temperature=0.0,
             extra_body_json={},
+            review_prompt_injection="先合并重复记忆，再谨慎改写。",
             enabled=True,
             query_analysis_enabled=True,
             query_analysis_max_output_tokens=256,
@@ -574,6 +575,35 @@ def test_admin_ai_settings_requires_login(monkeypatch) -> None:
     assert response.headers["location"].startswith("/admin/login")
 
 
+def test_admin_ai_settings_page_shows_review_prompt_injection(monkeypatch) -> None:
+    db = _AiConfigDb()
+    db.config = LlmProviderConfig(
+        id=uuid.uuid4(),
+        name="default",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        encrypted_api_key=None,
+        api_key_hint=None,
+        timeout_ms=30000,
+        max_output_tokens=4096,
+        temperature=0.0,
+        extra_body_json={},
+        review_prompt_injection="按长期价值和重复度整理。",
+        enabled=True,
+        query_analysis_enabled=True,
+        query_analysis_max_output_tokens=256,
+        query_analysis_timeout_ms=3000,
+    )
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get("/admin/ai-settings")
+
+    assert response.status_code == 200
+    assert "整理前置注入提示" in response.text
+    assert "按长期价值和重复度整理。" in response.text
+
+
 def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
     monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
     db = _AiConfigDb()
@@ -591,6 +621,7 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
             "max_output_tokens": "2048",
             "temperature": "0",
             "extra_body_json": '{"thinking":{"type":"disabled"}}',
+            "review_prompt_injection": "先压缩重复表达，再给出谨慎建议。",
             "enabled": "on",
             "query_analysis_enabled": "on",
             "query_analysis_max_output_tokens": "256",
@@ -610,6 +641,7 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
     assert db.config.timeout_ms == 45000
     assert db.config.max_output_tokens == 2048
     assert db.config.extra_body_json == {"thinking": {"type": "disabled"}}
+    assert db.config.review_prompt_injection == "先压缩重复表达，再给出谨慎建议。"
     assert db.config.enabled is True
     assert db.config.query_analysis_enabled is True
     assert db.config.query_analysis_max_output_tokens == 256
@@ -849,6 +881,7 @@ def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
     assert response.status_code == 303
     assert response.headers["location"].startswith("/admin/ai-reviews/")
     assert captured["api_key"] == "sk-test"
+    assert captured["messages"][0]["content"].startswith("管理员整理前置注入提示：\n先合并重复记忆，再谨慎改写。")
     assert "只输出 JSON" in captured["messages"][0]["content"]
     assert captured["response_format"] == {"type": "json_object"}
     assert len(db.suggestions) == 1

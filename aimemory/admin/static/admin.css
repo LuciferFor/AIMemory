@@ -979,8 +979,13 @@ th {
   line-height: 1.5;
 }
 
-.ai-settings-form textarea {
+.ai-settings-form textarea[name="extra_body_json"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ai-settings-form .prompt-textarea {
+  font-family: inherit;
+  line-height: 1.5;
 }
 
 .ai-suggestion-list {
