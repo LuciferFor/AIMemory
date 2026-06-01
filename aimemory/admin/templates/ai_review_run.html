@@ -6,6 +6,12 @@
 <div class="section-head">
   <a class="button-link" href="/admin/memories">返回记忆</a>
   <a class="button-link" href="/admin/ai-settings">AI 设置</a>
+  {% if pending_suggestion_count %}
+  <form method="post" action="/admin/ai-reviews/{{ run.id }}/apply-all" data-confirm="确认应用当前任务里的全部待处理 AI 建议？">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="primary">全部应用 {{ pending_suggestion_count }} 条</button>
+  </form>
+  {% endif %}
   <span class="badge {{ 'ready' if run.status == 'completed' else 'failed' if run.status == 'failed' else 'pending' }}">{{ run.status }}</span>
 </div>
 

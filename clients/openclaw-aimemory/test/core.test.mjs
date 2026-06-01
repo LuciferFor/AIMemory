@@ -39,6 +39,8 @@ test("env/config merge prefers AIMEMORY env values", () => {
   assert.equal(config.apiKey, "aim_test");
   assert.equal(config.agentId, "env-agent");
   assert.equal(config.topK, 50);
+  assert.equal(config.fallbackCategory, "未分类");
+  assert.equal(config.preloadContextOnMessageReceived, true);
   assert.equal(config.includePromptInMemoryQuery, false);
   assert.equal(config.includeUnstructuredTranscriptForCompaction, false);
 });
@@ -50,14 +52,19 @@ test("parseEnvText handles quotes and comments", () => {
   );
 });
 
-test("direct/private/dm allowed and group/channel skipped", () => {
+test("private and local app chat types allowed while group/channel skipped", () => {
   const config = resolveConfig({}, { envValues: { AIMEMORY_API_KEY: "k" }, processEnv: {} });
 
   assert.equal(isAllowedTurn({ chatType: "direct" }, {}, config), true);
   assert.equal(isAllowedTurn({ chatType: "private" }, {}, config), true);
   assert.equal(isAllowedTurn({ chatType: "dm" }, {}, config), true);
+  assert.equal(isAllowedTurn({ chatType: "webchat" }, {}, config), true);
+  assert.equal(isAllowedTurn({ chatType: "dashboard" }, {}, config), true);
+  assert.equal(isAllowedTurn({ chatType: "embedded" }, {}, config), true);
+  assert.equal(isAllowedTurn({ chatType: "unknown-private-ui" }, {}, config), true);
   assert.equal(isAllowedTurn({ chatType: "group" }, {}, config), false);
   assert.equal(isAllowedTurn({ chatType: "channel" }, {}, config), false);
+  assert.equal(isAllowedTurn({ chatType: "guild" }, {}, config), false);
 });
 
 test("buildQueryFromTurn uses prompt and recent messages", () => {
@@ -368,6 +375,364 @@ test("runtime context success injects prependContext", async () => {
   assert.equal(contextBodies[0].query, "hello");
 });
 
+test("runtime message_received preloads context without prompt build", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return '{"category":"未分类"}';
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.message_received(
+    { text: "老婆出个兔女郎的", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].query, "老婆出个兔女郎的");
+  assert.equal(contextBodies[0].category, "未分类");
+});
+
+test("runtime falls back to default category when category model is unavailable", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(
+          JSON.stringify({ items: [{ name: "回答风格" }, { name: "未分类" }] }),
+          { status: 200 },
+        );
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build({ userInput: "你现在是什么模型", chatType: "direct" }, {});
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].category, "未分类");
+});
+
+test("runtime uses technical heuristic category when category model is unavailable", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          { status: 200 },
+        );
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build({ userInput: "onebot还是没回复啊", chatType: "direct" }, {});
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].category, "技术记忆");
+});
+
+test("runtime overrides model fallback category with technical heuristic", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return '{"category":"未分类"}';
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          { status: 200 },
+        );
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build({ userInput: "AIMemory接口报错了", chatType: "direct" }, {});
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].category, "技术记忆");
+});
+
+test("runtime refreshes preloaded fallback category when prompt hook can use llm", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          { status: 200 },
+        );
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build(
+    { userInput: "你记得这个事情吗", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+  api.runtime.llm = {
+    async complete() {
+      return '{"category":"技术记忆"}';
+    },
+  };
+  await handlers.before_prompt_build(
+    { userInput: "你记得这个事情吗", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+
+  assert.equal(contextBodies.length, 2);
+  assert.equal(contextBodies[0].category, "未分类");
+  assert.equal(contextBodies[1].category, "技术记忆");
+});
+
+test("runtime defers message preload instead of using fallback when llm is unavailable", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          { status: 200 },
+        );
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.message_received(
+    { text: "onebot又连不上了", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+  api.runtime.llm = {
+    async complete() {
+      return '{"category":"技术记忆"}';
+    },
+  };
+  await handlers.before_prompt_build(
+    { userInput: "onebot又连不上了", chatType: "direct", messageId: "message-1" },
+    { messageId: "message-1" },
+  );
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].category, "技术记忆");
+});
+
+test("runtime falls back to first category when configured fallback is absent", async () => {
+  const handlers = {};
+  const contextBodies = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return { info() {}, warn() {}, error() {} };
+        },
+      },
+      llm: {
+        async complete() {
+          return '{"category":null}';
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async (url, request) => {
+      if (String(url).endsWith("/v1/memories/categories")) {
+        return new Response(JSON.stringify({ items: [{ name: "回答风格" }] }), { status: 200 });
+      }
+      contextBodies.push(JSON.parse(request.body));
+      return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build({ userInput: "你直接改啊", chatType: "direct" }, {});
+
+  assert.equal(contextBodies.length, 1);
+  assert.equal(contextBodies[0].category, "回答风格");
+});
+
+test("runtime logs skip reasons for disallowed and empty turns", async () => {
+  const handlers = {};
+  const infos = [];
+  const api = {
+    on(name, handler) {
+      handlers[name] = handler;
+    },
+    runtime: {
+      logging: {
+        getChildLogger() {
+          return {
+            info(message, meta) {
+              infos.push({ message, meta });
+            },
+            warn() {},
+            error() {},
+          };
+        },
+      },
+    },
+  };
+  registerAIMemoryRuntime(api, {
+    fetchImpl: async () => {
+      throw new Error("should not fetch");
+    },
+    envValues: {
+      AIMEMORY_BASE_URL: "http://aimemory",
+      AIMEMORY_API_KEY: "aim_key",
+      AIMEMORY_AGENT_ID: "agent",
+    },
+    processEnv: {},
+  });
+
+  await handlers.before_prompt_build({ userInput: "群聊消息", chatType: "group" }, {});
+  await handlers.before_prompt_build({ prompt: "IDENTITY.md 永久人设", chatType: "direct" }, {});
+
+  assert.equal(infos.some((item) => item.meta?.reason === "not_allowed_turn"), true);
+  assert.equal(infos.some((item) => item.meta?.reason === "empty_query"), true);
+});
+
 test("runtime uses one-shot message_received user input instead of internal roleless input", async () => {
   const handlers = {};
   const contextBodies = [];
@@ -656,7 +1021,7 @@ test("runtime compaction infers sessionFile from hook context", async () => {
     { agentId: "main", sessionId: "session-123", sessionKey: "agent:main:test" },
   );
 
-  assert.match(readPaths[0], /\.openclaw\/agents\/main\/sessions\/session-123\.jsonl$/);
+  assert.match(readPaths[0], /\.openclaw[\/\\]agents[\/\\]main[\/\\]sessions[\/\\]session-123\.jsonl$/);
   assert.equal(writeBodies.length, 1);
 });
 

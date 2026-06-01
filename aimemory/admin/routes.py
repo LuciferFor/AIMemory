@@ -110,6 +110,8 @@ def request_log_business(log: RequestLog) -> dict[str, str]:
         label = "搜索记忆"
     elif path == "/v1/memories" and method == "POST":
         label = "保存记忆"
+    elif path == "/v1/memories/extract" and method == "POST":
+        label = "总结保存"
     elif path == "/v1/memories" and method == "DELETE":
         label = "删除记忆"
     elif path == "/v1/memories/categories" and method == "GET":
@@ -1445,11 +1447,52 @@ def ai_review_run_page(run_id: uuid.UUID, request: Request, db: Session = Depend
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 整理任务不存在。")
     run.suggestions.sort(key=lambda item: str(item.created_at))
+    pending_suggestion_count = sum(1 for item in run.suggestions if item.status == "pending")
     return templates.TemplateResponse(
         request,
         "ai_review_run.html",
-        base_context(request, session, run=run),
+        base_context(request, session, run=run, pending_suggestion_count=pending_suggestion_count),
     )
+
+
+@router.post("/ai-reviews/{run_id}/apply-all")
+async def apply_all_ai_suggestions(run_id: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    run = db.scalar(
+        select(AiMemoryReviewRun)
+        .options(selectinload(AiMemoryReviewRun.suggestions))
+        .where(AiMemoryReviewRun.id == run_id)
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI 整理任务不存在。")
+
+    pending_suggestions = sorted(
+        [suggestion for suggestion in run.suggestions if suggestion.status == "pending"],
+        key=lambda item: str(item.created_at),
+    )
+    if not pending_suggestions:
+        return redirect_to(f"/admin/ai-reviews/{run.id}", error="没有待应用的 AI 建议。")
+
+    applied = 0
+    errors: list[str] = []
+    for suggestion in pending_suggestions:
+        try:
+            apply_suggestion(db, suggestion)
+            applied += 1
+        except AiMemoryReviewError as exc:
+            db.rollback()
+            errors.append(str(exc))
+
+    if errors:
+        return redirect_to(
+            f"/admin/ai-reviews/{run.id}",
+            error=f"已应用 {applied} 条，{len(errors)} 条失败：{errors[0]}",
+        )
+    return redirect_to(f"/admin/ai-reviews/{run.id}", notice=f"已应用 {applied} 条 AI 建议。")
 
 
 @router.post("/ai-suggestions/{suggestion_id}/apply")

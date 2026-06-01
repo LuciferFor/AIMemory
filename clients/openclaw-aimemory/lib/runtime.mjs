@@ -63,6 +63,7 @@ function registerHook(api, name, handler, options) {
 }
 
 const RECENT_USER_INPUT_TTL_MS = 120000;
+const RECENT_MEMORY_CONTEXT_TTL_MS = 120000;
 
 function memoryTurnKey(event = {}, ctx = {}) {
   return String(
@@ -105,6 +106,53 @@ function consumeRecentUserInput(cache, event = {}, ctx = {}, maxChars = 1500) {
     return "";
   }
   return item.text.slice(-maxChars).trim();
+}
+
+function pruneRecentMemoryContexts(cache, now = Date.now()) {
+  for (const [key, item] of cache.entries()) {
+    if (!item || now - item.at > RECENT_MEMORY_CONTEXT_TTL_MS) {
+      cache.delete(key);
+    }
+  }
+}
+
+function getRecentMemoryContext(cache, event = {}, ctx = {}, query = "") {
+  const value = String(query || "").trim();
+  if (!value) {
+    return null;
+  }
+  pruneRecentMemoryContexts(cache);
+  const key = memoryTurnKey(event, ctx);
+  for (const candidate of [cache.get(key), cache.get("default")]) {
+    if (candidate?.query === value) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function rememberRecentMemoryContext(cache, event = {}, ctx = {}, query = "", promise) {
+  const value = String(query || "").trim();
+  if (!value || !promise) {
+    return;
+  }
+  const item = { query: value, promise, at: Date.now() };
+  cache.set(memoryTurnKey(event, ctx), item);
+  cache.set("default", item);
+}
+
+function forgetRecentMemoryContext(cache, event = {}, ctx = {}, query = "") {
+  const value = String(query || "").trim();
+  if (!value) {
+    return;
+  }
+  const key = memoryTurnKey(event, ctx);
+  for (const cacheKey of [key, "default"]) {
+    const item = cache.get(cacheKey);
+    if (item?.query === value) {
+      cache.delete(cacheKey);
+    }
+  }
 }
 
 function compactionSaveKey(event = {}, ctx = {}) {
@@ -358,33 +406,226 @@ async function extractAndWriteMemories(api, event, ctx, config, sourceText, reas
   return { extracted: memories.length, written };
 }
 
+function selectFallbackCategory(categories, config) {
+  const names = (categories || []).map((item) => String(item?.name || "").trim()).filter(Boolean);
+  if (!names.length) {
+    return "";
+  }
+  const preferred = String(config.fallbackCategory || "").trim();
+  if (preferred && names.includes(preferred)) {
+    return preferred;
+  }
+  return names[0];
+}
+
+const TECHNICAL_CATEGORY_KEYWORDS = [
+  /onebot/i,
+  /openclaw/i,
+  /aimemory/i,
+  /\bapi\b/i,
+  /\bsql\b/i,
+  /\bdocker\b/i,
+  /\bredis\b/i,
+  /\bpostgres(?:ql)?\b/i,
+  /\bsystemd\b/i,
+  /接口/,
+  /插件/,
+  /连接/,
+  /连不上/,
+  /没回复/,
+  /回复/,
+  /报错/,
+  /错误/,
+  /登录/,
+  /配置/,
+  /部署/,
+  /服务器/,
+  /数据库/,
+  /请求/,
+  /日志/,
+  /端口/,
+  /密钥/,
+  /容器/,
+  /服务/,
+];
+
+const TECHNICAL_CATEGORY_PREFERENCES = ["技术记忆", "技术资料", "工作流程", "自动化"];
+
+function selectHeuristicCategory(categories, query) {
+  const text = String(query || "");
+  if (!TECHNICAL_CATEGORY_KEYWORDS.some((pattern) => pattern.test(text))) {
+    return "";
+  }
+  const names = (categories || []).map((item) => String(item?.name || "").trim()).filter(Boolean);
+  for (const preferred of TECHNICAL_CATEGORY_PREFERENCES) {
+    if (names.includes(preferred)) {
+      return preferred;
+    }
+  }
+  return "";
+}
+
 async function selectMemoryCategory(api, config, query, options, logger) {
   const categories = await fetchCategories(config, options);
   if (!categories.length) {
     logger.info("aimemory.category skipped: no categories");
-    return "";
+    return { category: "", categories, source: "none", skipReason: "no_categories" };
   }
+  const fallback = selectFallbackCategory(categories, config);
+  const heuristic = selectHeuristicCategory(categories, query);
   if (!api.runtime?.llm?.complete) {
     logger.warn("aimemory.category skipped: api.runtime.llm.complete unavailable");
-    return "";
+    const category = heuristic || fallback;
+    logger.info("aimemory.category fallback", {
+      category,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "llm_unavailable",
+    });
+    return {
+      category,
+      categories,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "llm_unavailable",
+    };
   }
-  const result = await api.runtime.llm.complete({
-    messages: buildCategorySelectionMessages(categories, query),
-    purpose: "aimemory.category",
-    maxTokens: 120,
-    temperature: 0,
+  try {
+    const result = await api.runtime.llm.complete({
+      messages: buildCategorySelectionMessages(categories, query),
+      purpose: "aimemory.category",
+      maxTokens: 120,
+      temperature: 0,
+    });
+    const category = parseSelectedCategory(result, categories);
+    if (category) {
+      if (heuristic && category === fallback && category !== heuristic) {
+        logger.info("aimemory.category heuristic override", {
+          category: heuristic,
+          modelCategory: category,
+          reason: "model_selected_fallback",
+        });
+        return { category: heuristic, categories, source: "heuristic", reason: "model_selected_fallback" };
+      }
+      logger.info("aimemory.category selected", { category });
+      return { category, categories, source: "model" };
+    }
+    const selected = heuristic || fallback;
+    logger.info("aimemory.category fallback", {
+      category: selected,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "empty_selection",
+    });
+    return {
+      category: selected,
+      categories,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "empty_selection",
+    };
+  } catch (error) {
+    logger.warn("aimemory.category failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const selected = heuristic || fallback;
+    logger.info("aimemory.category fallback", {
+      category: selected,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "selection_error",
+    });
+    return {
+      category: selected,
+      categories,
+      source: heuristic ? "heuristic" : "fallback",
+      reason: "selection_error",
+    };
+  }
+}
+
+async function prepareMemoryContextForTurn(
+  api,
+  event = {},
+  ctx = {},
+  config,
+  query,
+  logger,
+  options = {},
+  recentMemoryContexts,
+  prepareOptions = {},
+) {
+  const value = String(query || "").trim();
+  if (!value) {
+    logger.info("aimemory.context skipped", { reason: "empty_query" });
+    return { contextText: "", items: [], skipReason: "empty_query" };
+  }
+  if (prepareOptions.skipWhenLlmUnavailable === true && !api.runtime?.llm?.complete) {
+    logger.info("aimemory.context preload deferred", { reason: "llm_unavailable" });
+    return {
+      contextText: "",
+      items: [],
+      category: "",
+      skipReason: "llm_unavailable_deferred",
+    };
+  }
+
+  const cached = getRecentMemoryContext(recentMemoryContexts, event, ctx, value);
+  if (cached) {
+    const cachedResult = await cached.promise;
+    const canRefreshFallback =
+      prepareOptions.refreshFallbackWithLlm === true &&
+      cachedResult?.categorySource === "fallback" &&
+      cachedResult?.categoryReason === "llm_unavailable" &&
+      Boolean(api.runtime?.llm?.complete);
+    if (!canRefreshFallback) {
+      return cachedResult;
+    }
+    logger.info("aimemory.context cache refresh", {
+      reason: "llm_available_after_fallback",
+      previousCategory: cachedResult.category,
+    });
+    forgetRecentMemoryContext(recentMemoryContexts, event, ctx, value);
+  }
+
+  const promise = (async () => {
+    const selected = await selectMemoryCategory(api, config, value, options, logger);
+    if (!selected.category) {
+      logger.info("aimemory.context skipped", { reason: selected.skipReason || "no_categories" });
+      return {
+        contextText: "",
+        items: [],
+        category: "",
+        skipReason: selected.skipReason || "no_categories",
+      };
+    }
+    const result = await fetchMemoryContext(config, value, { ...options, category: selected.category });
+    logger.info("aimemory.context fetched", {
+      category: selected.category,
+      categorySource: selected.source,
+      items: result.items.length,
+      chars: result.contextText.length,
+    });
+    if (!result.contextText) {
+      logger.info("aimemory.context empty", { category: selected.category, items: result.items.length });
+    }
+    return {
+      ...result,
+      category: selected.category,
+      categorySource: selected.source,
+      categoryReason: selected.reason,
+    };
+  })().catch((error) => {
+    logger.warn("aimemory.context failed", {
+      error: error instanceof Error ? error.message : String(error),
+      baseUrl: config.baseUrl,
+      apiKey: maskSecret(config.apiKey),
+    });
+    return { contextText: "", items: [], skipReason: "context_failed", error };
   });
-  const category = parseSelectedCategory(result, categories);
-  if (!category) {
-    logger.info("aimemory.category empty");
-    return "";
-  }
-  logger.info("aimemory.category selected", { category });
-  return category;
+
+  rememberRecentMemoryContext(recentMemoryContexts, event, ctx, value, promise);
+  return promise;
 }
 
 export function registerAIMemoryRuntime(api, options = {}) {
   const recentUserInputs = new Map();
+  const recentMemoryContexts = new Map();
   const savedCompactions = new Set();
   let stopCompactionWatcher = null;
 
@@ -417,41 +658,43 @@ export function registerAIMemoryRuntime(api, options = {}) {
     async (event = {}, ctx = {}) => {
       const config = resolveHookConfig(event, options);
       const logger = getLogger(api, config);
+      if (!config.enabled) {
+        logger.info("aimemory.context skipped", { reason: "disabled" });
+        return {};
+      }
       if (!isAllowedTurn(event, ctx, config)) {
+        logger.info("aimemory.context skipped", { reason: "not_allowed_turn" });
         return {};
       }
       const query =
         buildCleanMemoryQueryFromTurn(event, ctx, 1500) ||
         consumeRecentUserInput(recentUserInputs, event, ctx, 1500);
       if (!query) {
+        logger.info("aimemory.context skipped", { reason: "empty_query" });
         return {};
       }
-      try {
-        const category = await selectMemoryCategory(api, config, query, options, logger);
-        if (!category) {
-          return {};
-        }
-        const result = await fetchMemoryContext(config, query, { ...options, category });
-        if (!result.contextText) {
-          logger.info("aimemory.context empty", { category, items: result.items.length });
-          return {};
-        }
-        logger.info("aimemory.context injected", {
-          category,
-          items: result.items.length,
-          chars: result.contextText.length,
-        });
-        return {
-          prependContext: result.contextText,
-        };
-      } catch (error) {
-        logger.warn("aimemory.context failed", {
-          error: error instanceof Error ? error.message : String(error),
-          baseUrl: config.baseUrl,
-          apiKey: maskSecret(config.apiKey),
-        });
+      const result = await prepareMemoryContextForTurn(
+        api,
+        event,
+        ctx,
+        config,
+        query,
+        logger,
+        options,
+        recentMemoryContexts,
+        { refreshFallbackWithLlm: true },
+      );
+      if (!result.contextText) {
         return {};
       }
+      logger.info("aimemory.context injected", {
+        category: result.category,
+        items: result.items.length,
+        chars: result.contextText.length,
+      });
+      return {
+        prependContext: result.contextText,
+      };
     },
     { priority: 60, timeoutMs: 5000 },
   );
@@ -462,11 +705,35 @@ export function registerAIMemoryRuntime(api, options = {}) {
     async (event = {}, ctx = {}) => {
       const config = resolveHookConfig(event, options);
       const logger = getLogger(api, config);
+      if (!config.enabled) {
+        logger.info("aimemory.context skipped", { reason: "disabled" });
+        return;
+      }
       if (!isAllowedTurn(event, ctx, config)) {
+        logger.info("aimemory.context skipped", { reason: "not_allowed_turn" });
         return;
       }
       const text = extractInboundText(event);
+      logger.info("aimemory.message received", { chars: String(text || "").trim().length });
       rememberRecentUserInput(recentUserInputs, event, ctx, text);
+      if (config.preloadContextOnMessageReceived) {
+        const query = String(text || "").trim();
+        if (query) {
+          await prepareMemoryContextForTurn(
+            api,
+            event,
+            ctx,
+            config,
+            query.slice(-1500).trim(),
+            logger,
+            options,
+            recentMemoryContexts,
+            { skipWhenLlmUnavailable: true },
+          );
+        } else {
+          logger.info("aimemory.context skipped", { reason: "empty_query" });
+        }
+      }
       if (!config.saveOnExplicitRemember) {
         return;
       }

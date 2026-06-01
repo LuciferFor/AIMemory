@@ -56,6 +56,7 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
     entry["enabled"] = True
     hooks = entry.setdefault("hooks", {})
     hooks["allowConversationAccess"] = True
+    hooks["allowPromptInjection"] = True
     plugin_config = entry.setdefault("config", {})
     plugin_config.update(
         {
@@ -63,10 +64,12 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
             "baseUrl": args.base_url,
             "agentId": args.agent_id,
             "envFile": str(args.env_file),
-            "allowedChatTypes": ["direct", "private", "dm"],
+            "allowedChatTypes": ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
             "topK": args.top_k,
             "maxChars": args.max_chars,
             "timeoutMs": args.timeout_ms,
+            "fallbackCategory": "未分类",
+            "preloadContextOnMessageReceived": True,
             "saveOnExplicitRemember": True,
             "saveBeforeCompaction": True,
             "useBackendExtraction": True,

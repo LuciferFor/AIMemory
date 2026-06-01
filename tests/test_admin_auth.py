@@ -9,7 +9,7 @@ from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.main import create_app
 from aimemory.models.ai_chat import AiChatMessage, AiChatThread
-from aimemory.models.ai_memory_review import AiMemoryReviewSuggestion
+from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSuggestion
 from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory_category import MemoryCategory
 from aimemory.models.search_stopword import SearchStopword
@@ -213,12 +213,46 @@ class _RequestLogDb(_FakeDb):
                 response_summary=None,
                 created_at="2026-05-30 10:01:00+00:00",
             ),
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                request_id="extract-log-789",
+                source="api",
+                method="POST",
+                path="/v1/memories/extract",
+                route_path="/v1/memories/extract",
+                status_code=200,
+                duration_ms=456.78,
+                client_ip="192.168.31.9",
+                user_agent="node",
+                user_id=self.user_id,
+                api_key_id=uuid.uuid4(),
+                api_key_prefix="aim_test",
+                admin_username=None,
+                error_type=None,
+                response_summary={
+                    "type": "extract",
+                    "agent_id": "5df9cbfb-d31b-46dd-972b-05d466d2257c",
+                    "reason": "before_compaction",
+                    "transcript_chars": 512,
+                    "extracted": 2,
+                    "written": 2,
+                    "items": [
+                        {
+                            "external_id": "reply-style-cn-first",
+                            "category": "回答风格",
+                            "title": "中文优先",
+                            "action": "updated",
+                        }
+                    ],
+                },
+                created_at="2026-05-30 10:02:00+00:00",
+            ),
         ]
         self.users = [SimpleNamespace(id=self.user_id, name="lucifer")]
         self.scalars_calls = 0
 
     def execute(self, query) -> _Rows:
-        return _Rows([(self.logs[0], "lucifer"), (self.logs[1], None)])
+        return _Rows([(self.logs[0], "lucifer"), (self.logs[1], None), (self.logs[2], "lucifer")])
 
     def scalars(self, query) -> _Rows:
         return _Rows(self.users)
@@ -286,6 +320,58 @@ class _AiReviewDb(_MemoryDb):
         for value in self.added:
             if getattr(value, "id", None) is None:
                 value.id = uuid.uuid4()
+
+
+class _AiReviewApplyAllDb(_FakeDb):
+    def __init__(self) -> None:
+        self.run_id = uuid.uuid4()
+        self.pending_one = AiMemoryReviewSuggestion(
+            id=uuid.uuid4(),
+            run_id=self.run_id,
+            suggestion_type="rewrite",
+            status="pending",
+            memory_ids=[str(uuid.uuid4())],
+            proposed_json={"title": "标题一"},
+            original_json={},
+            created_at="2026-05-30 10:00:00+00:00",
+        )
+        self.pending_two = AiMemoryReviewSuggestion(
+            id=uuid.uuid4(),
+            run_id=self.run_id,
+            suggestion_type="soft_delete",
+            status="pending",
+            memory_ids=[str(uuid.uuid4())],
+            proposed_json={},
+            original_json={},
+            created_at="2026-05-30 10:01:00+00:00",
+        )
+        self.ignored = AiMemoryReviewSuggestion(
+            id=uuid.uuid4(),
+            run_id=self.run_id,
+            suggestion_type="rewrite",
+            status="ignored",
+            memory_ids=[str(uuid.uuid4())],
+            proposed_json={"title": "已忽略"},
+            original_json={},
+            created_at="2026-05-30 10:02:00+00:00",
+        )
+        self.run = AiMemoryReviewRun(
+            id=self.run_id,
+            admin_username="admin",
+            status="completed",
+            source="selection",
+            request_summary={"memory_count": 2},
+            response_summary={"suggestion_count": 3},
+            created_at="2026-05-30 10:00:00+00:00",
+        )
+        self.run.suggestions = [self.pending_two, self.ignored, self.pending_one]
+        self.rolled_back = False
+
+    def scalar(self, query):
+        return self.run
+
+    def rollback(self) -> None:
+        self.rolled_back = True
 
 
 class _AiChatDb(_FakeDb):
@@ -563,6 +649,14 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     assert "回复偏好" in response.text
     assert "pref-short-replies" in response.text
     assert "用户喜欢短一点、自然一点的回答。" in response.text
+    assert "总结保存" in response.text
+    assert "/v1/memories/extract" in response.text
+    assert "提取 2" in response.text
+    assert "写入 2" in response.text
+    assert "对话 512 字" in response.text
+    assert "中文优先" in response.text
+    assert "reply-style-cn-first" in response.text
+    assert "updated" in response.text
     assert "Authorization" not in response.text
 
 
@@ -892,6 +986,42 @@ def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
     assert suggestion.proposed_json["category"] == "偏好"
     assert suggestion.reason == "去掉重复表达。"
     assert db.committed is True
+
+
+def test_admin_ai_review_page_shows_apply_all(monkeypatch) -> None:
+    db = _AiReviewApplyAllDb()
+    client = _client(monkeypatch, db=db)
+    _login_and_csrf(client)
+
+    response = client.get(f"/admin/ai-reviews/{db.run_id}")
+
+    assert response.status_code == 200
+    assert "全部应用 2 条" in response.text
+    assert f"/admin/ai-reviews/{db.run_id}/apply-all" in response.text
+
+
+def test_admin_can_apply_all_pending_ai_suggestions(monkeypatch) -> None:
+    db = _AiReviewApplyAllDb()
+    applied_ids = []
+
+    def fake_apply_suggestion(_db, suggestion) -> None:
+        applied_ids.append(suggestion.id)
+        suggestion.status = "applied"
+
+    monkeypatch.setattr("aimemory.admin.routes.apply_suggestion", fake_apply_suggestion)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        f"/admin/ai-reviews/{db.run_id}/apply-all",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/admin/ai-reviews/{db.run_id}")
+    assert applied_ids == [db.pending_one.id, db.pending_two.id]
+    assert db.ignored.status == "ignored"
 
 
 def test_admin_search_stopwords_page_lists_terms(monkeypatch) -> None:

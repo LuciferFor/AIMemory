@@ -108,18 +108,37 @@
             <summary>详情</summary>
             {% if log.response_summary %}
             {% set summary = log.response_summary %}
+            {% set summary_type = summary.get("type", "unknown") %}
             <div class="summary-head">
               <span>业务 {{ row.business.label }}</span>
-              <span>类型 {{ summary["type"] }}</span>
-              <span>命中 {{ summary["result_count"] }}</span>
-              <span>上下文 {{ summary["context_chars"] }} 字</span>
-              <span>{{ "已截断" if summary["truncated"] else "未截断" }}</span>
+              <span>类型 {{ summary_type }}</span>
+              {% if summary_type == "context" %}
+              <span>命中 {{ summary.get("result_count", 0) }}</span>
+              <span>上下文 {{ summary.get("context_chars", 0) }} 字</span>
+              <span>{{ "已截断" if summary.get("truncated") else "未截断" }}</span>
+              {% elif summary_type == "extract" %}
+              <span>提取 {{ summary.get("extracted", 0) }}</span>
+              <span>写入 {{ summary.get("written", 0) }}</span>
+              {% if summary.get("deduplicated") %}<span>重复请求已跳过</span>{% endif %}
+              {% else %}
+              <span>业务摘要</span>
+              {% endif %}
             </div>
             <div class="summary-query">
               <div>
-                <span class="summary-label">请求内容</span>
-                <strong>{{ summary.get("query_preview") or summary.get("query") or "未记录" }}</strong>
+                <span class="summary-label">{{ "保存来源" if summary_type == "extract" else "请求内容" }}</span>
+                <strong>{{ summary.get("query_preview") or summary.get("query") or summary.get("reason") or "未记录" }}</strong>
               </div>
+              {% if summary_type == "extract" %}
+              <div>
+                <span class="summary-label">保存参数</span>
+                <span class="term-list">
+                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
+                  {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
+                </span>
+              </div>
+              {% endif %}
               {% if summary.get("keyword_source") %}
               <div>
                 <span class="summary-label">AI 理解</span>
@@ -206,15 +225,18 @@
               </div>
               {% endif %}
             </div>
-            {% if summary["items"] %}
+            {% if summary.get("items") %}
             <div class="summary-memory-list">
-              {% for item in summary["items"] %}
+              {% for item in summary.get("items", []) %}
               <article class="summary-memory-item">
                 <header>
-                  <strong>{{ item['title'] }}</strong>
-                  <code title="{{ item['external_id'] }}">{{ short_middle(item['external_id'], 16, 8) }}</code>
-                  <span class="muted">分数 {{ "%.3f"|format(item['score']) }}</span>
+                  <strong>{{ item.get("title", "未命名记忆") }}</strong>
+                  {% if item.get("external_id") %}<code title="{{ item.get("external_id") }}">{{ short_middle(item.get("external_id"), 16, 8) }}</code>{% endif %}
+                  {% if item.get("score") is not none %}<span class="muted">分数 {{ "%.3f"|format(item.get("score")) }}</span>{% endif %}
+                  {% if item.get("category") %}<span class="muted">分类 {{ item.get("category") }}</span>{% endif %}
+                  {% if item.get("action") %}<span class="badge ready">{{ item.get("action") }}</span>{% endif %}
                 </header>
+                {% if summary_type == "context" %}
                 <div class="matched-terms">
                   <span class="summary-label">命中关键词</span>
                   <span class="term-list">
@@ -235,6 +257,7 @@
                     {% endfor %}
                   </span>
                 </div>
+                {% endif %}
                 {% if item.get("score_parts") %}
                 <div class="matched-terms">
                   <span class="summary-label">分数明细</span>
@@ -247,7 +270,7 @@
                   </span>
                 </div>
                 {% endif %}
-                <p>{{ item['content_preview'] }}</p>
+                {% if item.get("content_preview") %}<p>{{ item.get("content_preview") }}</p>{% endif %}
               </article>
               {% endfor %}
             </div>

@@ -34,7 +34,11 @@
         "default": [
           "direct",
           "private",
-          "dm"
+          "dm",
+          "webchat",
+          "dashboard",
+          "local",
+          "embedded"
         ]
       },
       "allowedAgents": {
@@ -61,6 +65,14 @@
         "minimum": 500,
         "maximum": 600000,
         "default": 3000
+      },
+      "fallbackCategory": {
+        "type": "string",
+        "default": "未分类"
+      },
+      "preloadContextOnMessageReceived": {
+        "type": "boolean",
+        "default": true
       },
       "saveOnExplicitRemember": {
         "type": "boolean",

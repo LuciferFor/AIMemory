@@ -9,8 +9,12 @@ requests or before context compaction.
 - Runs on all OpenClaw channels, but only for private/direct/DM sessions by
   default.
 - Calls `GET /v1/memories/categories`, asks the current OpenClaw model to pick
-  one existing category, then calls `POST /v1/memories/context` in
-  `before_prompt_build`.
+  one existing category, then calls `POST /v1/memories/context`. The plugin
+  preloads context in `message_received` and reuses it in `before_prompt_build`,
+  so AIMemory request logs still show a `/context` request even when no memory
+  is returned.
+- If category selection is unavailable or empty, the plugin falls back to
+  `fallbackCategory` (`未分类` by default), or the first existing category.
 - Builds the AIMemory query only from the current user input. Model replies,
   previous messages, static prompt files such as `IDENTITY.md`, `SOUL.md`, and
   `MEMORY.md` are not sent to AIMemory for retrieval.
@@ -69,17 +73,20 @@ The installer writes:
       "aimemory": {
         "enabled": true,
         "hooks": {
-          "allowConversationAccess": true
+          "allowConversationAccess": true,
+          "allowPromptInjection": true
         },
         "config": {
           "enabled": true,
           "baseUrl": "http://192.168.31.11:10011",
           "agentId": "5df9cbfb-d31b-46dd-972b-05d466d2257c",
           "envFile": "~/.openclaw/aimemory.env",
-          "allowedChatTypes": ["direct", "private", "dm"],
+          "allowedChatTypes": ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
           "topK": 8,
           "maxChars": 3000,
           "timeoutMs": 3000,
+          "fallbackCategory": "未分类",
+          "preloadContextOnMessageReceived": true,
           "saveOnExplicitRemember": true,
           "saveBeforeCompaction": true,
           "useBackendExtraction": true,
@@ -114,7 +121,9 @@ POST /v1/memories/context
 ```
 
 If the model cannot choose a clear category, the plugin skips memory context for
-that turn instead of doing a cross-category search.
+that turn only when no categories exist. Otherwise it falls back to `未分类` (or
+the first category) and still calls `/v1/memories/context`, so the request log
+shows whether the result was empty or injected.
 
 Check the AIMemory request log `query_preview` after a private message. It
 should show the current user request and recent ordinary dialogue only, not

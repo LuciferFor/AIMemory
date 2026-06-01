@@ -8,11 +8,13 @@ export const DEFAULT_CONFIG = Object.freeze({
   baseUrl: "http://192.168.31.11:10011",
   agentId: "5df9cbfb-d31b-46dd-972b-05d466d2257c",
   envFile: "~/.openclaw/aimemory.env",
-  allowedChatTypes: ["direct", "private", "dm"],
+  allowedChatTypes: ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
   allowedAgents: [],
   topK: 8,
   maxChars: 3000,
   timeoutMs: 3000,
+  fallbackCategory: "未分类",
+  preloadContextOnMessageReceived: true,
   saveOnExplicitRemember: true,
   saveBeforeCompaction: true,
   useBackendExtraction: true,
@@ -48,6 +50,18 @@ const REMEMBER_PATTERNS = [
   /please remember/i,
   /keep this in memory/i,
 ];
+
+const BLOCKED_CHAT_TYPES = new Set([
+  "group",
+  "groups",
+  "channel",
+  "channels",
+  "guild",
+  "room",
+  "rooms",
+  "forum",
+  "public",
+]);
 
 export function expandHome(filePath) {
   if (!filePath || typeof filePath !== "string") {
@@ -142,6 +156,7 @@ export function resolveConfig(pluginConfig = {}, options = {}) {
     topK: clampInteger(merged.topK, DEFAULT_CONFIG.topK, 1, 50),
     maxChars: clampInteger(merged.maxChars, DEFAULT_CONFIG.maxChars, 0, 12000),
     timeoutMs: clampInteger(merged.timeoutMs, DEFAULT_CONFIG.timeoutMs, 500, 600000),
+    fallbackCategory: String(merged.fallbackCategory || DEFAULT_CONFIG.fallbackCategory).trim(),
     compactionWatcherIntervalMs: clampInteger(
       merged.compactionWatcherIntervalMs,
       DEFAULT_CONFIG.compactionWatcherIntervalMs,
@@ -153,6 +168,7 @@ export function resolveConfig(pluginConfig = {}, options = {}) {
     saveBeforeCompaction: merged.saveBeforeCompaction !== false,
     useBackendExtraction: merged.useBackendExtraction !== false,
     watchCodexCompaction: merged.watchCodexCompaction !== false,
+    preloadContextOnMessageReceived: merged.preloadContextOnMessageReceived !== false,
     includePromptInMemoryQuery: merged.includePromptInMemoryQuery === true,
     includeUnstructuredTranscriptForCompaction:
       merged.includeUnstructuredTranscriptForCompaction === true,
@@ -540,7 +556,12 @@ export function isAllowedTurn(event = {}, ctx = {}, config = DEFAULT_CONFIG) {
     // Local app-server sessions often do not carry a channel chat type; allow them.
     return true;
   }
-  return config.allowedChatTypes.includes(chatType);
+  if (config.allowedChatTypes.includes(chatType)) {
+    return true;
+  }
+  // Keep group/channel style spaces disabled by default, but allow local or newly
+  // named private app sessions so AIMemory does not silently miss user turns.
+  return !BLOCKED_CHAT_TYPES.has(chatType);
 }
 
 export function hasExplicitRememberIntent(text) {
@@ -792,7 +813,7 @@ export function buildCategorySelectionMessages(categories, query) {
     {
       role: "system",
       content:
-        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；如果没有明确合适分类，输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
+        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；优先选择最接近的已有分类，不要轻易选择“未分类”或 null。涉及部署、接口、插件、数据库、OneBot、OpenClaw、AIMemory、报错和连接问题时，应优先选择技术/流程/资料/自动化等最接近分类。只有完全无法判断时才输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
     },
     {
       role: "user",
