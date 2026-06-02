@@ -45,6 +45,14 @@ def test_effective_terms_from_ai_keywords_keeps_english_phrases_only() -> None:
     assert "gpt4:英文数字混合" in ignored
 
 
+def test_effective_terms_from_ai_keywords_keeps_numeric_proper_nouns() -> None:
+    terms, ignored = qa.effective_terms_from_ai_keywords(["命运2", "destiny 2", "gpt4", "2026"], set())
+
+    assert terms == ["命运2", "destiny 2"]
+    assert "gpt4:英文数字混合" in ignored
+    assert "2026:数字" in ignored
+
+
 def test_analyze_memory_query_uses_small_overrides(monkeypatch) -> None:
     captured = {}
 

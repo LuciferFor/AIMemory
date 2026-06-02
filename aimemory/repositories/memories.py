@@ -19,7 +19,7 @@ from aimemory.services.attachments import (
     attachment_search_text,
     decode_attachment_inputs,
 )
-from aimemory.services.text import build_search_text, normalize_query, split_query_terms
+from aimemory.services.text import build_search_text, is_numeric_proper_noun_term, normalize_query, split_query_terms
 
 logger = logging.getLogger(__name__)
 
@@ -296,10 +296,12 @@ def search_memories(
     payload: MemorySearchRequest,
     normalized_query: str,
     query_terms: list[str] | None = None,
+    min_matched_terms: int | None = None,
 ) -> list[SearchResult]:
     query_terms = query_terms if query_terms is not None else split_query_terms(normalized_query)
     if not query_terms:
         return []
+    required_matched_terms = min_matched_terms if min_matched_terms is not None else (1 if len(query_terms) == 1 else 2)
     params: dict[str, Any] = {
         "user_id": user_id,
         "category_id": category_id,
@@ -309,7 +311,7 @@ def search_memories(
         "like_query": f"%{normalized_query}%",
         "top_k": payload.top_k,
         "candidate_limit": max(payload.top_k * 8, 50),
-        "min_matched_terms": 1 if len(query_terms) == 1 else 2,
+        "min_matched_terms": required_matched_terms,
         "min_score": MIN_SEARCH_SCORE,
     }
     where_sql = _build_common_where(payload, params)
@@ -379,13 +381,16 @@ FROM term_counts
 
     high_frequency_terms: set[str] = set()
     for row in rows:
+        term = str(row["term"] or "")
+        if is_numeric_proper_noun_term(term):
+            continue
         match_count = int(row["match_count"] or 0)
         total_count = float(row["total_count"] or 0.0)
         ratio = (match_count / total_count) if total_count else 0.0
         if match_count >= HIGH_FREQUENCY_ABSOLUTE_MATCHES or (
             match_count >= HIGH_FREQUENCY_MIN_MATCHES and ratio >= HIGH_FREQUENCY_RATIO
         ):
-            high_frequency_terms.add(row["term"])
+            high_frequency_terms.add(term)
 
     effective_terms = [term for term in query_terms if term not in high_frequency_terms]
     ignored_terms = [f"{term}:高频弱词" for term in query_terms if term in high_frequency_terms]

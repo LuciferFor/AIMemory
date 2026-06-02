@@ -9,6 +9,8 @@ jieba.setLogLevel(logging.WARNING)
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_CJK_NUMERIC_PROPER_NOUN_RE = re.compile(r"[\u4e00-\u9fff]{2,}\d{1,2}")
+_CJK_NUMERIC_SEQUENCE_RE = re.compile(r"([\u4e00-\u9fff]{2,})(\d{1,2})")
 _SPACE_RE = re.compile(r"\s+")
 _NUMERIC_RE = re.compile(r"\d+")
 _ENGLISH_RE = re.compile(r"[a-z]+")
@@ -113,6 +115,25 @@ def is_numeric_term(value: str) -> bool:
     return bool(_NUMERIC_RE.fullmatch(normalize_query(value)))
 
 
+def is_cjk_numeric_proper_noun(value: str) -> bool:
+    normalized = normalize_query(value)
+    return bool(_CJK_NUMERIC_PROPER_NOUN_RE.fullmatch(normalized))
+
+
+def is_english_numeric_phrase(value: str) -> bool:
+    normalized = normalize_query(value)
+    words = normalized.split()
+    if len(words) < 2 or len(words) > MAX_ENGLISH_PHRASE_WORDS:
+        return False
+    if not is_numeric_term(words[-1]) or len(words[-1]) > 2:
+        return False
+    return all(english_phrase_word_reason(word) is None for word in words[:-1])
+
+
+def is_numeric_proper_noun_term(value: str) -> bool:
+    return is_cjk_numeric_proper_noun(value) or is_english_numeric_phrase(value)
+
+
 def raw_query_terms(value: str) -> list[str]:
     normalized = normalize_query(value)
     terms: list[str] = []
@@ -123,6 +144,8 @@ def raw_query_terms(value: str) -> list[str]:
             terms.append(term)
             seen.add(term)
 
+    for proper_noun in cjk_numeric_proper_nouns(normalized):
+        add_term(proper_noun.strip())
     for cjk_group in _CJK_RE.findall(normalized):
         for segment in jieba.lcut(cjk_group):
             add_term(segment.strip())
@@ -130,6 +153,21 @@ def raw_query_terms(value: str) -> list[str]:
         add_term(term)
     for phrase in english_phrases(normalized):
         add_term(phrase)
+    return terms
+
+
+def cjk_numeric_proper_nouns(value: str) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for match in _CJK_NUMERIC_SEQUENCE_RE.finditer(value):
+        cjk_prefix = match.group(1)
+        number = match.group(2)
+        segments = [segment.strip() for segment in jieba.lcut(cjk_prefix) if segment.strip()]
+        base = segments[-1] if segments else cjk_prefix
+        term = f"{base}{number}"
+        if is_cjk_numeric_proper_noun(term) and term not in seen:
+            terms.append(term)
+            seen.add(term)
     return terms
 
 
@@ -168,9 +206,14 @@ def english_phrases(value: str) -> list[str]:
         for size in range(MIN_ENGLISH_PHRASE_WORDS, MAX_ENGLISH_PHRASE_WORDS + 1):
             for index in range(0, len(current_run) - size + 1):
                 phrase_words = current_run[index : index + size]
+                phrase = " ".join(phrase_words)
+                if is_english_numeric_phrase(phrase):
+                    if phrase not in seen:
+                        phrases.append(phrase)
+                        seen.add(phrase)
+                    continue
                 if any(english_phrase_word_reason(word) is not None for word in phrase_words):
                     continue
-                phrase = " ".join(phrase_words)
                 if phrase not in seen:
                     phrases.append(phrase)
                     seen.add(phrase)
@@ -181,7 +224,7 @@ def english_phrases(value: str) -> list[str]:
         gap = text[previous_end : match.start()]
         if _CJK_RE.search(gap):
             flush_run()
-        if _ENGLISH_RE.fullmatch(token):
+        if _ENGLISH_RE.fullmatch(token) or is_numeric_term(token):
             current_run.append(token)
         else:
             flush_run()
@@ -194,6 +237,8 @@ def ignored_term_reason(term: str) -> str | None:
     normalized = normalize_query(term)
     if " " in normalized:
         return ignored_english_phrase_reason(normalized)
+    if is_cjk_numeric_proper_noun(normalized):
+        return None
     if is_numeric_term(normalized):
         return "数字"
     if _CJK_RE.fullmatch(normalized):
@@ -223,6 +268,8 @@ def ignored_english_phrase_reason(term: str) -> str | None:
         return "英文单词"
     if len(words) > MAX_ENGLISH_PHRASE_WORDS:
         return "英文短语过长"
+    if is_english_numeric_phrase(term):
+        return None
     for word in words:
         reason = english_phrase_word_reason(word)
         if reason is not None:

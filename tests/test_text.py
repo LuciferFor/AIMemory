@@ -46,6 +46,26 @@ def test_split_query_terms_ignores_pure_numbers() -> None:
     assert is_numeric_term("２０２６") is True
 
 
+def test_split_query_terms_keeps_cjk_numeric_proper_nouns() -> None:
+    terms = split_query_terms("命运2猎杀通行证 崩坏3 最终幻想14 2026")
+
+    assert "命运2" in terms
+    assert "崩坏3" in terms
+    assert "最终幻想14" in terms
+    assert "2026" not in terms
+
+
+def test_split_query_terms_keeps_english_numeric_phrases() -> None:
+    terms = split_query_terms("destiny 2 diablo 4 windows 11 gpt4 v2 api")
+
+    assert "destiny 2" in terms
+    assert "diablo 4" in terms
+    assert "windows 11" in terms
+    assert "gpt4" not in terms
+    assert "v2" not in terms
+    assert "api" not in terms
+
+
 def test_filter_query_terms_uses_stopwords() -> None:
     terms, ignored = filter_query_terms("2026 lucifer apple skill", {"lucifer", "skill"})
 

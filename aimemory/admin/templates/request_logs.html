@@ -229,6 +229,7 @@
                   {% if summary.get("category_not_found") %}<code class="term-chip ignored">分类不存在</code>{% endif %}
                   {% if summary.get("top_k") %}<code class="term-chip">top_k {{ summary.get("top_k") }}</code>{% endif %}
                   {% if summary.get("max_chars") %}<code class="term-chip">max_chars {{ summary.get("max_chars") }}</code>{% endif %}
+                  {% if summary.get("min_matched_terms") %}<code class="term-chip">最少命中 {{ summary.get("min_matched_terms") }}</code>{% endif %}
                   {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") %}<span class="muted">未记录</span>{% endif %}
                 </span>
               </div>
@@ -252,6 +253,14 @@
                   {% endfor %}
                 </span>
               </div>
+              {% if summary.get("no_result_reason") %}
+              <div>
+                <span class="summary-label">未命中原因</span>
+                <span class="term-list">
+                  <code class="term-chip ignored">{{ summary.get("no_result_reason") }}</code>
+                </span>
+              </div>
+              {% endif %}
               {% if summary.get("context_text_preview") is not none %}
               <div class="summary-context-preview">
                 <span class="summary-label">实际返回</span>

@@ -32,6 +32,7 @@ class _HighFrequencyDb:
         rows = [
             {"term": "不要", "match_count": 3, "total_count": 10},
             {"term": "苹果", "match_count": 1, "total_count": 10},
+            {"term": "命运2", "match_count": 10, "total_count": 10},
         ]
         return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: rows))
 
@@ -604,6 +605,56 @@ def test_search_results_does_not_fallback_when_ai_keywords_are_empty(monkeypatch
     assert calls == []
 
 
+def test_search_results_does_not_require_ai_numeric_alias_to_match(monkeypatch) -> None:
+    calls = []
+    kwargs_list = []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
+            category="偏好",
+            matched_existing=True,
+            confidence=1.0,
+            reason="命运2是游戏。",
+            intent_summary="询问命运2看法",
+            keywords=["命运2", "destiny 2", "游戏评价"],
+            negative_keywords=[],
+            duration_ms=10.0,
+        ),
+    )
+
+    def _fake_search_memories(*args, **kwargs):
+        calls.append(args)
+        kwargs_list.append(kwargs)
+        return []
+
+    monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
+    payload = MemorySearchRequest(agent_id="assistant", query="老婆你觉得命运2 怎么样")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is True
+    assert query_terms == ["命运2", "destiny 2", "游戏评价"]
+    assert ignored_terms == []
+    assert query_analysis["min_matched_terms"] == 1
+    assert kwargs_list == [{"min_matched_terms": 1}]
+    assert calls[0][4] == "命运2 destiny 2 游戏评价"
+    assert calls[0][5] == ["命运2", "destiny 2", "游戏评价"]
+
+
 def test_search_results_falls_back_when_ai_query_analysis_fails(monkeypatch) -> None:
     calls = []
 
@@ -645,6 +696,19 @@ def test_filter_high_frequency_terms_uses_user_memory_distribution() -> None:
     )
 
     assert terms == ["苹果"]
+    assert ignored == ["不要:高频弱词"]
+
+
+def test_filter_high_frequency_terms_keeps_numeric_proper_nouns() -> None:
+    terms, ignored = filter_high_frequency_terms(
+        _HighFrequencyDb(),
+        uuid4(),
+        uuid4(),
+        "assistant",
+        ["不要", "命运2"],
+    )
+
+    assert terms == ["命运2"]
     assert ignored == ["不要:高频弱词"]
 
 

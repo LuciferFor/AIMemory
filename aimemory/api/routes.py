@@ -749,11 +749,28 @@ def _search_results(
             *high_frequency_ignored_terms,
         ]
     if not query_terms:
+        query_analysis["no_result_reason"] = "无有效关键词"
         return [], False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
 
     normalized_query = normalize_query(" ".join(query_terms))
-    results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms)
+    min_matched_terms = minimum_matched_terms_for_query(query_terms, payload.query)
+    query_analysis["min_matched_terms"] = min_matched_terms
+    default_min_matched_terms = 1 if len(query_terms) == 1 else 2
+    search_kwargs = {"min_matched_terms": min_matched_terms} if min_matched_terms != default_min_matched_terms else {}
+    results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms, **search_kwargs)
+    if not results:
+        query_analysis["no_result_reason"] = "分类内没有匹配记忆或分数低于阈值"
     return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
+
+
+def minimum_matched_terms_for_query(query_terms: list[str], query: str) -> int:
+    required_terms = [term for term in query_terms if term_appears_in_query(term, query)]
+    count = len(required_terms) if required_terms else len(query_terms)
+    return 1 if count <= 1 else 2
+
+
+def term_appears_in_query(term: str, query: str) -> bool:
+    return normalize_query(term) in normalize_query(query)
 
 
 def combined_ai_query_context(
@@ -996,6 +1013,8 @@ def build_context_response_summary(
         "ai_request_total_tokens": query_analysis.get("ai_request_total_tokens", 0),
         "query_terms": logged_terms,
         "ignored_terms": logged_ignored_terms,
+        "min_matched_terms": query_analysis.get("min_matched_terms", 0),
+        "no_result_reason": query_analysis.get("no_result_reason", ""),
         "result_count": len(results),
         "context_chars": len(context_text),
         "truncated": bool(context_text) and len(context_text) >= max_chars,
