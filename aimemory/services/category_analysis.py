@@ -14,6 +14,10 @@ MAX_CATEGORY_ANALYSIS_CHARS = 4000
 MAX_CATEGORY_REASON_CHARS = 200
 DEFAULT_CATEGORY_ANALYSIS_TOKENS = 256
 DEFAULT_CATEGORY_ANALYSIS_TIMEOUT_MS = 3000
+LOCAL_DOMAIN_HINTS = (
+    "本地领域提示：命运2/Destiny 2 是游戏，不是技术系统；"
+    "相关的猎杀通行证、装备、仓库容量、版本同步、游戏任务、赛季系统、角色配装应归入游戏/娱乐类分类。"
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,9 @@ def build_category_analysis_messages(
                 "查询记忆时只能选择已有分类；如果无法从已有分类判断，category 输出 null。"
                 "分类应是日常事务类别，例如 技术问题、回答风格、工作流程、自动化、角色偏好、图片偏好、其它；"
                 "不要把一次性关键词、错别字、工具名或普通名词直接当分类。"
+                "必须优先参考已有分类的 description；如果 description 写了别名、领域或例子，应按说明归类。"
+                "不要只因为出现“任务、系统、容量、仓库、版本”就判成技术；这些词可能是游戏、影视或日常事务里的概念。"
+                f"{LOCAL_DOMAIN_HINTS}"
                 "遇到 OneBot、OpenClaw、AIMemory、接口、插件、数据库、部署、日志、报错、连接问题，应优先选择最接近的技术/流程/资料/自动化类已有分类。"
                 "只输出 JSON 对象，格式为："
                 "{\"category\":\"分类名或 null\",\"matched_existing\":true,"

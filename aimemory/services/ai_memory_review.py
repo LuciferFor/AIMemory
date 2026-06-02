@@ -14,7 +14,8 @@ from aimemory.repositories.memories import utcnow
 from aimemory.repositories.memory_categories import get_or_create_category
 from aimemory.services.attachments import attachment_search_text
 from aimemory.services.text import build_search_text
-from aimemory.services.openai_compatible import chat_completion
+from aimemory.services.openai_compatible import chat_completion, token_usage_summary
+from aimemory.services.query_analysis import strip_json_code_fence
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
@@ -96,7 +97,8 @@ def build_review_messages(
         "除非明显重复或无价值，不要建议删除。"
         "标题和正文必须使用第三方视角，例如“用户偏好……”“助手应……”。"
         "优先使用已有分类；确实没有合适分类时可以给出新分类名。"
-        "只输出 JSON 对象，不要输出解释。"
+        "只输出 JSON 对象，不要输出解释，不要使用 markdown 代码块，不要在 JSON 前后添加任何文字。"
+        "如果没有整理建议，也必须输出 {\"suggestions\":[]}。"
         "\n\nJSON 输出格式："
         "{\"suggestions\":[{\"type\":\"rewrite|merge|move_category|soft_delete\","
         "\"confidence\":0.0,\"reason\":\"原因\",\"memory_ids\":[\"uuid\"],"
@@ -164,6 +166,8 @@ def create_review_run(
     db.add(run)
     db.flush()
 
+    result = None
+    usage: dict[str, int] = {}
     try:
         prompt_injection = getattr(config, "review_prompt_injection", "") or ""
         result = chat_completion(
@@ -172,6 +176,10 @@ def create_review_run(
             build_review_messages(memory_payload, categories, prompt_injection),
             response_format={"type": "json_object"},
         )
+        usage = token_usage_summary(result.usage)
+        run.prompt_tokens = usage.get("prompt_tokens")
+        run.completion_tokens = usage.get("completion_tokens")
+        run.total_tokens = usage.get("total_tokens")
         suggestions = normalize_suggestions(result.content, {item["memory_id"] for item in memory_payload})
         for suggestion in suggestions:
             db.add(
@@ -190,16 +198,18 @@ def create_review_run(
                     },
                 )
             )
-        usage = result.usage
         run.status = "completed"
-        run.response_summary = {"suggestion_count": len(suggestions)}
-        run.prompt_tokens = usage.get("prompt_tokens")
-        run.completion_tokens = usage.get("completion_tokens")
-        run.total_tokens = usage.get("total_tokens")
+        run.response_summary = {"suggestion_count": len(suggestions), "ai_total_tokens": usage.get("total_tokens")}
         run.completed_at = utcnow()
     except Exception as exc:
         run.status = "failed"
         run.error = str(exc)[:2000]
+        if result is not None:
+            run.response_summary = {
+                "raw_preview": preview_ai_output(result.content),
+                "raw_chars": len(str(result.content or "")),
+                "ai_total_tokens": usage.get("total_tokens"),
+            }
         run.completed_at = utcnow()
     db.add(run)
     db.commit()
@@ -207,10 +217,14 @@ def create_review_run(
 
 
 def normalize_suggestions(content: str, allowed_memory_ids: set[str]) -> list[dict[str, Any]]:
+    normalized_content = strip_json_code_fence(content)
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AiMemoryReviewError("AI 返回不是合法 JSON。") from exc
+        parsed = json.loads(normalized_content)
+    except json.JSONDecodeError:
+        try:
+            parsed = json.loads(extract_json_candidate(normalized_content))
+        except json.JSONDecodeError as exc:
+            raise AiMemoryReviewError("AI 返回不是合法 JSON。") from exc
     raw_items = parsed.get("suggestions") if isinstance(parsed, dict) else parsed
     if not isinstance(raw_items, list):
         raise AiMemoryReviewError("AI 返回 JSON 缺少 suggestions 数组。")
@@ -249,6 +263,52 @@ def normalize_suggestions(content: str, allowed_memory_ids: set[str]) -> list[di
             }
         )
     return suggestions
+
+
+def extract_json_candidate(value: str) -> str:
+    text_value = str(value or "").strip()
+    if not text_value:
+        return text_value
+    if text_value[0] in "[{":
+        return text_value
+    candidates: list[str] = []
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = text_value.find(opener)
+        if start < 0:
+            continue
+        extracted = balanced_json_slice(text_value, start, opener, closer)
+        if extracted:
+            candidates.append(extracted)
+    return candidates[0] if candidates else text_value
+
+
+def balanced_json_slice(value: str, start: int, opener: str, closer: str) -> str:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(value)):
+        char = value[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return value[start : index + 1]
+    return ""
+
+
+def preview_ai_output(value: str) -> str:
+    return " ".join(str(value or "").split())[:500]
 
 
 def apply_suggestion(db: Session, suggestion: AiMemoryReviewSuggestion) -> None:

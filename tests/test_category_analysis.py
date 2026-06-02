@@ -74,8 +74,27 @@ def test_analyze_memory_category_uses_json_output(monkeypatch) -> None:
     assert captured["kwargs"]["response_format"] == {"type": "json_object"}
     assert captured["kwargs"]["temperature"] == 0.0
     assert "查询记忆时只能选择已有分类" in captured["messages"][0]["content"]
+    assert "必须优先参考已有分类的 description" in captured["messages"][0]["content"]
 
 
 def test_parse_category_analysis_rejects_invalid_json() -> None:
     with pytest.raises(ValueError, match="合法 JSON"):
         ca.parse_category_analysis("不是 json", [])
+
+
+def test_category_prompt_contains_local_game_hints_and_descriptions() -> None:
+    messages = ca.build_category_analysis_messages(
+        text="命运2猎杀通行证任务",
+        operation="context",
+        categories=[
+            _category("技术记忆", "接口、数据库、部署、日志、报错、连接问题。"),
+            _category("娱乐偏好", "游戏、动漫、影视；命运2/Destiny 2 相关内容。"),
+        ],
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+    assert "命运2/Destiny 2 是游戏" in system_prompt
+    assert "不要只因为出现“任务、系统、容量、仓库、版本”就判成技术" in system_prompt
+    assert "娱乐偏好：游戏、动漫、影视；命运2/Destiny 2 相关内容。" in user_prompt
+    assert "命运2猎杀通行证任务" in user_prompt

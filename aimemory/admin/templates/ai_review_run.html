@@ -26,6 +26,15 @@
   {% if run.error %}
   <div class="notice error">{{ run.error }}</div>
   {% endif %}
+  {% if run.response_summary.get("raw_preview") %}
+  <details open>
+    <summary>AI 原始返回预览</summary>
+    {% if run.response_summary.get("raw_chars") %}
+    <p class="muted">原始返回约 {{ run.response_summary.get("raw_chars") }} 字，仅显示前 500 字。</p>
+    {% endif %}
+    <pre>{{ run.response_summary.get("raw_preview") }}</pre>
+  </details>
+  {% endif %}
   {% if run.prompt_preview %}
   <details>
     <summary>任务摘要</summary>
