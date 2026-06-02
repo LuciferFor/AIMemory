@@ -146,7 +146,8 @@
     <tbody>
       {% for row in rows %}
       {% set memory = row.memory %}
-      <tr class="memory-row {{ 'is-deleted' if memory.deleted_at else '' }}">
+      {% set ai_review_applied = row.ai_review_applied %}
+      <tr class="memory-row {{ 'is-deleted' if memory.deleted_at else '' }} {{ 'is-ai-applied' if ai_review_applied else '' }}">
         <td class="select-cell">
           {% if not memory.deleted_at %}
           <input type="checkbox" name="memory_ids" value="{{ memory.id }}" form="ai-review-selected">
@@ -154,6 +155,12 @@
         </td>
         <td class="memory-title-cell">
           <strong title="{{ memory.title }}">{{ memory.title }}</strong>
+          {% if ai_review_applied %}
+          <span
+            class="ai-applied-badge"
+            title="{{ ai_review_applied.suggestion_type_label }}{% if ai_review_applied.applied_at %} / {{ full_datetime(ai_review_applied.applied_at) }}{% endif %}"
+          >AI 已应用</span>
+          {% endif %}
         </td>
         <td><span class="badge">{{ row.category_name }}</span></td>
         <td class="owner-cell">

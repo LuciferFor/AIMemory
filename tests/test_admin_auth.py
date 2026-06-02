@@ -119,9 +119,10 @@ class _MemoryDb(_FakeDb):
                 attachments=[],
             ),
         ]
+        review_run_id = uuid.uuid4()
         self.review_runs = [
             AiMemoryReviewRun(
-                id=uuid.uuid4(),
+                id=review_run_id,
                 admin_username="admin",
                 status="completed",
                 source="selection",
@@ -141,6 +142,35 @@ class _MemoryDb(_FakeDb):
                 created_at="2026-05-30 11:00:00+00:00",
             )
         ]
+        self.applied_suggestions = [
+            AiMemoryReviewSuggestion(
+                id=uuid.uuid4(),
+                run_id=review_run_id,
+                suggestion_type="rewrite",
+                status="applied",
+                memory_ids=[str(self.memories[0].id)],
+                target_memory_id=self.memories[0].id,
+                proposed_json={},
+                original_json={},
+                created_at="2026-05-30 11:00:00+00:00",
+                updated_at="2026-05-30 11:01:00+00:00",
+                applied_at="2026-05-30 11:02:00+00:00",
+            ),
+        ]
+        self.pending_suggestions = [
+            AiMemoryReviewSuggestion(
+                id=uuid.uuid4(),
+                run_id=review_run_id,
+                suggestion_type="rewrite",
+                status="pending",
+                memory_ids=[str(self.memories[1].id)],
+                target_memory_id=self.memories[1].id,
+                proposed_json={},
+                original_json={},
+                created_at="2026-05-30 11:00:00+00:00",
+                updated_at="2026-05-30 11:01:00+00:00",
+            ),
+        ]
         self.scalars_calls = 0
         self.added = []
         self.committed = False
@@ -154,10 +184,12 @@ class _MemoryDb(_FakeDb):
     def scalars(self, query) -> _Rows:
         self.scalars_calls += 1
         if self.scalars_calls == 1:
-            return _Rows(self.users)
+            return _Rows(self.applied_suggestions)
         if self.scalars_calls == 2:
-            return _Rows(self.categories)
+            return _Rows(self.users)
         if self.scalars_calls == 3:
+            return _Rows(self.categories)
+        if self.scalars_calls == 4:
             return _Rows(self.agents)
         return _Rows(self.review_runs)
 
@@ -1228,6 +1260,9 @@ def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
     assert "输出 5" in response.text
     assert "总 17" in response.text
     assert "缓存 3" in response.text
+    assert "is-ai-applied" in response.text
+    assert response.text.count("AI 已应用") == 1
+    assert "改写压缩 / 2026-05-30 19:02:00 北京时间" in response.text
     assert "col-actions" in response.text
     assert "全选" in response.text
     assert 'data-select-all="memory_ids"' in response.text

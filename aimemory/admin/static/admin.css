@@ -645,12 +645,38 @@ th {
   background: #f8fafc;
 }
 
+.memory-table tbody tr.is-ai-applied {
+  background: #eff6ff;
+  box-shadow: inset 4px 0 0 #60a5fa;
+}
+
+.memory-table tbody tr.is-ai-applied td.action-cell {
+  background: #eff6ff;
+}
+
+.memory-table tbody tr.is-ai-applied:hover {
+  background: #dbeafe;
+}
+
+.memory-table tbody tr.is-ai-applied:hover td.action-cell {
+  background: #dbeafe;
+}
+
 .memory-table tbody tr.is-deleted {
   background: #fafafa;
 }
 
 .memory-table tbody tr.is-deleted td.action-cell {
   background: #fafafa;
+}
+
+.memory-table tbody tr.is-deleted.is-ai-applied {
+  background: #f8fafc;
+  box-shadow: inset 4px 0 0 #93c5fd;
+}
+
+.memory-table tbody tr.is-deleted.is-ai-applied td.action-cell {
+  background: #f8fafc;
 }
 
 .memory-main-cell {
@@ -664,6 +690,22 @@ th {
   text-align: center;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.ai-applied-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .memory-title {

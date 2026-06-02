@@ -66,7 +66,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260602-2045"
+ADMIN_ASSET_VERSION = "20260602-2115"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -1301,6 +1301,32 @@ def memories_page(
         }
         for memory, user_name, category_name in db.execute(query.limit(limit)).all()
     ]
+    memory_id_strings = [str(row["memory"].id) for row in rows]
+    applied_ai_review_by_memory_id: dict[str, dict[str, object]] = {}
+    if memory_id_strings:
+        memory_id_set = set(memory_id_strings)
+        applied_conditions = [
+            AiMemoryReviewSuggestion.memory_ids.contains([memory_id])
+            for memory_id in memory_id_strings
+        ]
+        applied_suggestions = db.scalars(
+            select(AiMemoryReviewSuggestion)
+            .where(AiMemoryReviewSuggestion.status == "applied")
+            .where(or_(*applied_conditions))
+            .order_by(AiMemoryReviewSuggestion.applied_at.desc(), AiMemoryReviewSuggestion.updated_at.desc())
+        ).all()
+        for suggestion in applied_suggestions:
+            applied_at = suggestion.applied_at or suggestion.updated_at or suggestion.created_at
+            for raw_memory_id in suggestion.memory_ids or []:
+                memory_id = str(raw_memory_id)
+                if memory_id in memory_id_set and memory_id not in applied_ai_review_by_memory_id:
+                    applied_ai_review_by_memory_id[memory_id] = {
+                        "suggestion_type": suggestion.suggestion_type,
+                        "suggestion_type_label": SUGGESTION_TYPE_LABELS.get(suggestion.suggestion_type, suggestion.suggestion_type),
+                        "applied_at": applied_at,
+                    }
+    for row in rows:
+        row["ai_review_applied"] = applied_ai_review_by_memory_id.get(str(row["memory"].id))
     users = db.scalars(select(User).order_by(User.name)).all()
     category_query = select(MemoryCategory).where(MemoryCategory.deleted_at.is_(None)).order_by(MemoryCategory.name)
     if selected_user_id:
