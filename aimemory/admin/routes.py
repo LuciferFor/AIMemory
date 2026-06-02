@@ -50,7 +50,7 @@ from aimemory.repositories.search_stopwords import (
 )
 from aimemory.services.attachments import attachment_search_text
 from aimemory.services.ai_crypto import AiConfigEncryptionError, decrypt_secret, encrypt_secret, mask_secret
-from aimemory.services.ai_chat import generate_ai_chat_reply, generate_ai_chat_title, make_thread_title
+from aimemory.services.ai_chat import generate_ai_chat_reply, generate_ai_chat_title_result, make_thread_title, merge_usage
 from aimemory.services.ai_memory_review import (
     AiMemoryReviewError,
     apply_suggestion,
@@ -60,13 +60,13 @@ from aimemory.services.ai_memory_review import (
     get_llm_config,
     ignore_suggestion,
 )
-from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion
+from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion, token_usage_summary
 from aimemory.services.text import build_search_text, is_numeric_term
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260602-2015"
+ADMIN_ASSET_VERSION = "20260602-2045"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -727,7 +727,7 @@ async def test_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
         return redirect_to("/admin/ai-settings", error="请先保存 AI 配置。")
     try:
         api_key = decrypt_ai_api_key(config, get_settings().ai_config_encryption_secret)
-        chat_completion(
+        result = chat_completion(
             config,
             api_key,
             [
@@ -736,9 +736,21 @@ async def test_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
             ],
             response_format={"type": "json_object"},
         )
+        usage = token_usage_summary(result.usage)
     except (AiConfigEncryptionError, OpenAICompatibleError) as exc:
         return redirect_to("/admin/ai-settings", error=str(exc))
-    return redirect_to("/admin/ai-settings", notice="AI 连接测试成功。")
+    if usage:
+        return redirect_to(
+            "/admin/ai-settings",
+            notice=(
+                "AI 连接测试成功。"
+                f"输入 {usage.get('prompt_tokens', 0)}，"
+                f"输出 {usage.get('completion_tokens', 0)}，"
+                f"总 {usage.get('total_tokens', 0)} tokens"
+                + (f"，缓存 {usage.get('cached_tokens')}。" if usage.get("cached_tokens") else "。")
+            ),
+        )
+    return redirect_to("/admin/ai-settings", notice="AI 连接测试成功，未返回 token 用量。")
 
 
 def load_ai_chat_threads(db: Session, admin_username: str) -> list[AiChatThread]:
@@ -799,11 +811,13 @@ def append_ai_chat_reply(
     try:
         result = generate_ai_chat_reply(db, config=config, api_key=api_key, history=history)
         usage = result.get("usage") or {}
+        metadata = dict(result.get("metadata") or {})
+        metadata["ai_usage"] = dict(usage)
         assistant_message = AiChatMessage(
             thread_id=thread.id,
             role="assistant",
             content=str(result.get("content") or ""),
-            metadata_json=result.get("metadata") or {},
+            metadata_json=metadata,
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
             total_tokens=usage.get("total_tokens"),
@@ -819,9 +833,25 @@ def append_ai_chat_reply(
     db.add(assistant_message)
     if is_first_message:
         try:
-            thread.title = generate_ai_chat_title(config, api_key, title_content)
-        except Exception:
+            title_result = generate_ai_chat_title_result(config, api_key, title_content)
+            title_usage = dict(title_result.get("usage") or {})
+            thread.title = str(title_result.get("title") or make_thread_title(title_content))
+            if title_usage:
+                metadata = dict(assistant_message.metadata_json or {})
+                breakdown = dict(metadata.get("ai_usage_breakdown") or {})
+                breakdown["title"] = title_usage
+                metadata["ai_usage_breakdown"] = breakdown
+                total_usage = merge_usage(metadata.get("ai_usage") or {}, title_usage)
+                metadata["ai_usage"] = total_usage
+                assistant_message.metadata_json = metadata
+                assistant_message.prompt_tokens = total_usage.get("prompt_tokens")
+                assistant_message.completion_tokens = total_usage.get("completion_tokens")
+                assistant_message.total_tokens = total_usage.get("total_tokens")
+        except Exception as exc:
             thread.title = make_thread_title(title_content)
+            metadata = dict(assistant_message.metadata_json or {})
+            metadata["title_usage_error"] = str(exc)[:300]
+            assistant_message.metadata_json = metadata
     thread.updated_at = utcnow()
     db.add(thread)
     db.commit()
@@ -1038,7 +1068,11 @@ async def generate_ai_chat_message_reply(thread_id: uuid.UUID, request: Request,
         "assistant": {
             "content": assistant_message.content,
             "error": assistant_message.error,
+            "prompt_tokens": assistant_message.prompt_tokens,
+            "completion_tokens": assistant_message.completion_tokens,
             "total_tokens": assistant_message.total_tokens,
+            "usage": (assistant_message.metadata_json or {}).get("ai_usage") or {},
+            "usage_breakdown": (assistant_message.metadata_json or {}).get("ai_usage_breakdown") or {},
         },
     }
     return JSONResponse(payload) if wants_json else redirect_to(f"/admin/ai-chat/{thread.id}")

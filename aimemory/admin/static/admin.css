@@ -2096,6 +2096,20 @@ pre {
   padding: 2px 8px;
 }
 
+.ai-usage-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-usage-detail span {
+  color: #334155;
+}
+
 .ai-message-text {
   color: #111827;
   line-height: 1.72;

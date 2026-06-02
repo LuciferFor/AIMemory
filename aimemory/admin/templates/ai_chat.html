@@ -61,17 +61,36 @@
       <div class="ai-message-list">
         {% for message in thread.messages %}
         <article class="ai-message-row {{ message.role }}">
+          {% set message_meta = message.metadata_json or {} %}
+          {% set message_usage = message_meta.get("ai_usage") or {} %}
+          {% set usage_breakdown = message_meta.get("ai_usage_breakdown") or {} %}
           <div class="ai-message-avatar">{{ "你" if message.role == "user" else "AI" }}</div>
           <div class="ai-message-card">
             <header>
               <strong>{{ "管理员" if message.role == "user" else "AIMemory AI" }}</strong>
               <span>{{ compact_datetime(message.created_at) }}</span>
-              {% if message.total_tokens %}<code>{{ message.total_tokens }} tokens</code>{% endif %}
+              {% if message.total_tokens %}<code>总 {{ message.total_tokens }} tokens</code>{% endif %}
+              {% if message_usage.get("prompt_tokens") %}<code>输入 {{ message_usage.get("prompt_tokens") }}</code>{% endif %}
+              {% if message_usage.get("completion_tokens") %}<code>输出 {{ message_usage.get("completion_tokens") }}</code>{% endif %}
+              {% if message_usage.get("cached_tokens") %}<code>缓存 {{ message_usage.get("cached_tokens") }}</code>{% endif %}
             </header>
             <div class="ai-message-text">{{ message.content }}</div>
-            {% if message.metadata_json and message.metadata_json.get("sql_results") %}
+            {% if usage_breakdown %}
+            <div class="ai-usage-detail">
+              {% for name, usage in usage_breakdown.items() %}
+              {% if usage %}
+              <span>{{ {"plan": "查询计划", "final": "最终回答", "title": "标题"}.get(name, name) }}</span>
+              {% if usage.get("prompt_tokens") %}<code>输入 {{ usage.get("prompt_tokens") }}</code>{% endif %}
+              {% if usage.get("completion_tokens") %}<code>输出 {{ usage.get("completion_tokens") }}</code>{% endif %}
+              {% if usage.get("total_tokens") %}<code>总 {{ usage.get("total_tokens") }}</code>{% endif %}
+              {% if usage.get("cached_tokens") %}<code>缓存 {{ usage.get("cached_tokens") }}</code>{% endif %}
+              {% endif %}
+              {% endfor %}
+            </div>
+            {% endif %}
+            {% if message_meta and message_meta.get("sql_results") %}
             <div class="ai-sql-list">
-              {% for result in message.metadata_json.get("sql_results", []) %}
+              {% for result in message_meta.get("sql_results", []) %}
               <details class="ai-sql-card">
                 <summary>
                   <span>{{ result.get("title") or "只读查询" }}</span>
@@ -111,6 +130,7 @@
               {% endfor %}
             </div>
             {% endif %}
+            {% if message_meta.get("title_usage_error") %}<div class="ai-muted">标题生成未统计：{{ message_meta.get("title_usage_error") }}</div>{% endif %}
             {% if message.error %}<div class="notice error">{{ message.error }}</div>{% endif %}
           </div>
         </article>
@@ -191,6 +211,11 @@
       const name = document.createElement("strong");
       name.textContent = role === "user" ? "管理员" : "AIMemory AI";
       header.appendChild(name);
+      if (options && options.totalTokens) {
+        const total = document.createElement("code");
+        total.textContent = "总 " + options.totalTokens + " tokens";
+        header.appendChild(total);
+      }
       const text = document.createElement("div");
       text.className = "ai-message-text";
       text.textContent = content;
@@ -200,7 +225,35 @@
       row.appendChild(card);
       list.appendChild(row);
       scrollChatToBottom(true);
-      return { row, card, text };
+      return { row, card, header, text };
+    }
+
+    function renderAssistantUsage(message, assistant) {
+      if (!message || !message.header || !assistant) {
+        return;
+      }
+      const usage = assistant.usage || {};
+      const totalTokens = assistant.total_tokens || usage.total_tokens;
+      if (totalTokens) {
+        const total = document.createElement("code");
+        total.textContent = "总 " + totalTokens + " tokens";
+        message.header.appendChild(total);
+      }
+      if (usage.prompt_tokens) {
+        const prompt = document.createElement("code");
+        prompt.textContent = "输入 " + usage.prompt_tokens;
+        message.header.appendChild(prompt);
+      }
+      if (usage.completion_tokens) {
+        const completion = document.createElement("code");
+        completion.textContent = "输出 " + usage.completion_tokens;
+        message.header.appendChild(completion);
+      }
+      if (usage.cached_tokens) {
+        const cached = document.createElement("code");
+        cached.textContent = "缓存 " + usage.cached_tokens;
+        message.header.appendChild(cached);
+      }
     }
 
     function chatScrollContainer() {
@@ -382,6 +435,7 @@
             loadingMessage.text.textContent = replyPayload.assistant && replyPayload.assistant.content
               ? replyPayload.assistant.content
               : "已收到回复。";
+            renderAssistantUsage(loadingMessage, replyPayload.assistant);
           }
           updateBrowserThreadState(replyPayload.thread_url ? replyPayload : sendPayload, form);
           updateThreadTitle(replyPayload);

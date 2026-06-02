@@ -773,6 +773,33 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
     assert db.committed is True
 
 
+def test_admin_ai_settings_test_shows_token_usage(monkeypatch) -> None:
+    monkeypatch.setenv("AI_CONFIG_ENCRYPTION_SECRET", "test-ai-secret")
+    db = _AiReviewDb()
+
+    def fake_chat_completion(config, api_key, messages, **kwargs):
+        return SimpleNamespace(
+            content='{"ok": true}',
+            usage={"prompt_tokens": 6, "completion_tokens": 2, "total_tokens": 8},
+        )
+
+    monkeypatch.setattr("aimemory.admin.routes.chat_completion", fake_chat_completion)
+    client = _client(monkeypatch, db=db)
+    csrf = _login_and_csrf(client)
+
+    response = client.post(
+        "/admin/ai-settings/test",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "AI+%E8%BF%9E%E6%8E%A5%E6%B5%8B%E8%AF%95%E6%88%90%E5%8A%9F" in response.headers["location"]
+    assert "%E8%BE%93%E5%85%A5+6" in response.headers["location"]
+    assert "%E8%BE%93%E5%87%BA+2" in response.headers["location"]
+    assert "%E6%80%BB+8+tokens" in response.headers["location"]
+
+
 def test_admin_ai_chat_requires_login(monkeypatch) -> None:
     client = _client(monkeypatch)
 
@@ -825,7 +852,10 @@ def test_admin_can_create_ai_chat_thread_with_first_message(monkeypatch) -> None
         }
 
     monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
-    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "自动标题")
+    monkeypatch.setattr(
+        "aimemory.admin.routes.generate_ai_chat_title_result",
+        lambda config, api_key, content: {"title": "自动标题", "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+    )
     client = _client(monkeypatch, db=db)
     csrf = _login_and_csrf(client)
 
@@ -842,6 +872,8 @@ def test_admin_can_create_ai_chat_thread_with_first_message(monkeypatch) -> None
     assert db.thread.title == "自动标题"
     assert db.thread.messages[-2].role == "user"
     assert db.thread.messages[-1].content == "自动创建后的回复。"
+    assert db.thread.messages[-1].metadata_json["ai_usage_breakdown"]["title"]["total_tokens"] == 2
+    assert db.thread.messages[-1].total_tokens == 11
 
 
 def test_admin_ai_chat_json_create_saves_user_before_reply(monkeypatch) -> None:
@@ -872,7 +904,10 @@ def test_admin_ai_chat_reply_endpoint_generates_assistant(monkeypatch) -> None:
         return {"content": "异步 AI 回复。", "metadata": {}, "usage": {"total_tokens": 8}}
 
     monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
-    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "异步标题")
+    monkeypatch.setattr(
+        "aimemory.admin.routes.generate_ai_chat_title_result",
+        lambda config, api_key, content: {"title": "异步标题", "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}},
+    )
     client = _client(monkeypatch, db=db)
     csrf = _login_and_csrf(client)
     client.post(
@@ -891,6 +926,9 @@ def test_admin_ai_chat_reply_endpoint_generates_assistant(monkeypatch) -> None:
     payload = response.json()
     assert payload["ok"] is True
     assert payload["assistant"]["content"] == "异步 AI 回复。"
+    assert payload["assistant"]["total_tokens"] == 11
+    assert payload["assistant"]["usage"]["total_tokens"] == 11
+    assert payload["assistant"]["usage_breakdown"]["title"]["total_tokens"] == 3
     assert db.thread.messages[-1].role == "assistant"
     assert db.thread.title == "异步标题"
 
@@ -924,7 +962,10 @@ def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
         }
 
     monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_reply", fake_generate)
-    monkeypatch.setattr("aimemory.admin.routes.generate_ai_chat_title", lambda config, api_key, content: "分类查询")
+    monkeypatch.setattr(
+        "aimemory.admin.routes.generate_ai_chat_title_result",
+        lambda config, api_key, content: {"title": "分类查询", "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}},
+    )
     client = _client(monkeypatch, db=db)
     csrf = _login_and_csrf(client)
 
@@ -942,7 +983,8 @@ def test_admin_ai_chat_sends_message_and_saves_reply(monkeypatch) -> None:
     assert db.thread.messages[-1].role == "assistant"
     assert db.thread.messages[-1].content == "这里是 AI 回复。"
     assert db.thread.messages[-1].metadata_json["sql_results"][0]["row_count"] == 1
-    assert db.thread.messages[-1].total_tokens == 3
+    assert db.thread.messages[-1].metadata_json["ai_usage_breakdown"]["title"]["total_tokens"] == 4
+    assert db.thread.messages[-1].total_tokens == 7
     assert db.thread.title == "分类查询"
 
 

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from aimemory.models.ai_chat import AiChatMessage
 from aimemory.models.llm_provider_config import LlmProviderConfig
-from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion
+from aimemory.services.openai_compatible import OpenAICompatibleError, chat_completion, token_usage_summary
 
 MAX_HISTORY_MESSAGES = 16
 MAX_SQL_QUERIES = 3
@@ -49,7 +49,7 @@ def clean_thread_title(value: str, *, fallback: str = "新对话") -> str:
     return text_value[:MAX_THREAD_TITLE_CHARS] if text_value else fallback
 
 
-def generate_ai_chat_title(config: LlmProviderConfig, api_key: str, user_content: str) -> str:
+def generate_ai_chat_title_result(config: LlmProviderConfig, api_key: str, user_content: str) -> dict[str, Any]:
     fallback = make_thread_title(user_content)
     result = chat_completion(
         config,
@@ -70,7 +70,11 @@ def generate_ai_chat_title(config: LlmProviderConfig, api_key: str, user_content
         temperature=0,
         timeout_ms=3000,
     )
-    return clean_thread_title(result.content, fallback=fallback)
+    return {"title": clean_thread_title(result.content, fallback=fallback), "usage": token_usage_summary(result.usage)}
+
+
+def generate_ai_chat_title(config: LlmProviderConfig, api_key: str, user_content: str) -> str:
+    return str(generate_ai_chat_title_result(config, api_key, user_content).get("title") or make_thread_title(user_content))
 
 
 def build_project_context(db: Session) -> str:
@@ -346,7 +350,9 @@ def generate_ai_chat_reply(
         )
     plan = parse_plan(plan_result.content)
     sql_results = execute_plan_sql(db, plan["sql_queries"])
-    usage = dict(plan_result.usage)
+    plan_usage = token_usage_summary(plan_result.usage)
+    usage = dict(plan_usage)
+    final_usage: dict[str, int] = {}
 
     if sql_results:
         final_result = chat_completion(
@@ -356,7 +362,8 @@ def generate_ai_chat_reply(
             response_format=None,
         )
         content = final_result.content
-        usage = merge_usage(usage, final_result.usage)
+        final_usage = token_usage_summary(final_result.usage)
+        usage = merge_usage(usage, final_usage)
     else:
         content = plan.get("assistant_message") or "我理解了，但这次不需要查询数据库。"
 
@@ -365,11 +372,16 @@ def generate_ai_chat_reply(
         "metadata": {
             "plan": plan,
             "sql_results": compact_sql_results(sql_results),
+            "ai_usage": usage,
+            "ai_usage_breakdown": {
+                "plan": plan_usage,
+                "final": final_usage,
+            },
         },
         "usage": usage,
     }
 
 
 def merge_usage(left: dict[str, Any], right: dict[str, Any]) -> dict[str, int]:
-    keys = {"prompt_tokens", "completion_tokens", "total_tokens"}
+    keys = {"prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"}
     return {key: int(left.get(key) or 0) + int(right.get(key) or 0) for key in keys}
