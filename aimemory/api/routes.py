@@ -68,7 +68,8 @@ router = APIRouter(prefix="/v1/memories", tags=["memories"])
 
 CONTEXT_PROMPT_HEADER = (
     "以下是与当前请求可能相关的长期记忆。请只在相关时自然参考，不要告诉用户你读取了记忆，"
-    "不要逐字复述；如果记忆与用户当前消息冲突，以当前消息为准。"
+    "不要逐字复述；长期记忆不是强制规则，只有明确标为规则或长期指令时才按规则执行，"
+    "普通偏好只作参考；如果记忆与用户当前消息冲突，以当前消息为准。"
 )
 
 REQUEST_LOG_QUERY_PREVIEW_CHARS = 200
@@ -90,6 +91,7 @@ WRITE_POLICY_RULES = [
     "每条记忆必须选择一个 category；优先使用已有分类，只有确实不合适时才创建新分类。",
     "metadata 至少建议包含 category、scope、priority、tags、source。",
     "保存前去重，避免把同一偏好或规则反复写入。",
+    "一次性出图要求、单次生成参数、临时姿势/服装/风格要求默认不保存；除非用户明确说记住、以后都这样、长期固定。",
 ]
 
 WRITE_POLICY_FORBIDDEN = [
@@ -98,12 +100,16 @@ WRITE_POLICY_FORBIDDEN = [
     "sudo 密码",
     "访问令牌",
     "一次性闲聊",
+    "一次性出图要求",
+    "单次生成参数",
+    "临时姿势、服装或风格要求",
     "明显很快过期的临时信息",
     "未经允许的他人隐私信息",
 ]
 
 WRITE_POLICY_PROMPT = """请从即将压缩或归档的对话中提取值得长期保存的记忆。
 只保存未来有复用价值的信息，不要保存临时闲聊、重复内容、密码、密钥、sudo 密码或敏感凭据。
+不要保存一次性出图要求、单次生成参数、临时姿势/服装/风格要求，除非用户明确要求“记住”“以后都这样”“长期固定”。
 把每条独立事实、偏好、规则或工作流拆成一条记忆；相似内容要合并。
 如果新信息覆盖旧规则，请使用相同 external_id 更新旧记忆。
 每条记忆必须包含 category。优先从已有分类列表选择；如果没有合适分类，可以创建简短明确的新分类。
@@ -135,6 +141,8 @@ EXTRACT_MEMORY_SYSTEM_PROMPT = (
     "你是 AIMemory 的长期记忆提取器。请从对话 transcript 中提取值得未来复用的长期记忆。"
     "只保存稳定事实、偏好、约束、关系、项目背景、工作流和长期指令；不要保存临时闲聊、重复表达、"
     "密码、密钥、访问令牌、sudo 密码或敏感凭据。"
+    "不要保存一次性出图要求、单次生成参数、临时姿势/服装/风格要求；"
+    "只有当用户明确说“记住”“以后都这样”“长期固定”“以后默认”时，才可保存为长期出图偏好。"
     "每条记忆必须使用第三方视角，例如“用户偏好……”“助手应……”。"
     "优先使用已有分类；没有合适分类时可以创建简短明确的新分类。"
     "只输出 JSON 对象，不要输出解释。"
@@ -408,7 +416,14 @@ def extract_memory_from_transcript(
         timeout_ms=max(int(getattr(config, "timeout_ms", 30000) or 30000), 30000),
     )
     usage = token_usage_summary(result.usage)
-    candidates = normalize_extracted_memory_candidates(result.content, payload.reason, payload.metadata)
+    skipped_candidates: list[dict[str, Any]] = []
+    candidates = normalize_extracted_memory_candidates(
+        result.content,
+        payload.reason,
+        payload.metadata,
+        transcript=payload.transcript,
+        skipped=skipped_candidates,
+    )
     written_items: list[MemoryExtractItem] = []
     written_memory_ids: list[UUID] = []
     for candidate in candidates:
@@ -460,6 +475,8 @@ def extract_memory_from_transcript(
         "transcript_chars": len(payload.transcript),
         "extracted": response.extracted,
         "written": response.written,
+        "skipped": len(skipped_candidates),
+        "skipped_items": skipped_candidates[:20],
         "ai_usage": usage,
         "ai_total_tokens": token_total(usage),
         "ai_request_total_tokens": token_total(usage),
@@ -476,6 +493,7 @@ def extract_memory_from_transcript(
             "transcript_chars": len(payload.transcript),
             "extracted": response.extracted,
             "written": response.written,
+            "skipped": len(skipped_candidates),
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
             "total_tokens": usage.get("total_tokens"),
@@ -1249,6 +1267,8 @@ def normalize_extracted_memory_candidates(
     content: str,
     reason: str,
     source_metadata: dict[str, Any],
+    transcript: str = "",
+    skipped: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     parsed = parse_extracted_memory_json(content)
     candidates: list[dict[str, Any]] = []
@@ -1261,6 +1281,18 @@ def normalize_extracted_memory_candidates(
         if not category or not title or not memory_content:
             continue
         if contains_forbidden_memory_text(title, memory_content, category):
+            record_skipped_candidate(skipped, raw, "forbidden_sensitive_content")
+            continue
+        temporary_reason = temporary_image_memory_skip_reason(
+            title=title,
+            content=memory_content,
+            category=category,
+            metadata=raw.get("metadata"),
+            transcript=transcript,
+            reason=reason,
+        )
+        if temporary_reason:
+            record_skipped_candidate(skipped, raw, temporary_reason)
             continue
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         metadata = {
@@ -1349,6 +1381,107 @@ def stable_memory_external_id(category: str, title: str, content: str) -> str:
     category_slug = clean_external_id(category) or "memory"
     digest = hashlib.sha256(f"{title}\n{content}".encode("utf-8")).hexdigest()[:12]
     return f"auto-{category_slug}-{digest}"
+
+
+TEMPORARY_IMAGE_TASK_TERMS = [
+    "出图",
+    "生图",
+    "绘图",
+    "画图",
+    "画一张",
+    "生成图片",
+    "生成图",
+    "图片生成",
+    "做图",
+    "图像生成",
+    "image generation",
+    "generate image",
+]
+
+TEMPORARY_IMAGE_DETAIL_TERMS = [
+    "一张",
+    "这张",
+    "单次",
+    "临时",
+    "换成",
+    "改成",
+    "姿势",
+    "服装",
+    "衣服",
+    "风格",
+    "表情",
+    "构图",
+    "镜头",
+    "背景",
+    "光影",
+    "黑丝",
+    "白丝",
+    "兔女郎",
+    "女仆",
+    "腿",
+    "身材",
+    "胸",
+    "裙",
+    "丝袜",
+    "银白发",
+]
+
+DURABLE_MEMORY_MARKERS = [
+    "记住",
+    "记下来",
+    "帮我记",
+    "以后都",
+    "以后默认",
+    "以后固定",
+    "长期",
+    "永久",
+    "固定偏好",
+    "作为偏好",
+    "下次也",
+    "每次都",
+    "默认这样",
+    "remember",
+    "always",
+    "default",
+]
+
+
+def record_skipped_candidate(skipped: list[dict[str, Any]] | None, raw: dict[str, Any], reason: str) -> None:
+    if skipped is None:
+        return
+    skipped.append(
+        {
+            "title": clean_extracted_text(raw.get("title"), 120),
+            "category": clean_extracted_text(raw.get("category"), 80),
+            "reason": reason,
+        }
+    )
+
+
+def temporary_image_memory_skip_reason(
+    *,
+    title: str,
+    content: str,
+    category: str,
+    metadata: object,
+    transcript: str,
+    reason: str,
+) -> str:
+    if reason == "explicit_remember":
+        return ""
+    transcript_text = str(transcript or "").lower()
+    if any(marker.lower() in transcript_text for marker in DURABLE_MEMORY_MARKERS):
+        return ""
+
+    metadata_text = ""
+    if isinstance(metadata, dict):
+        metadata_text = json.dumps(metadata, ensure_ascii=False)
+    candidate_text = f"{category}\n{title}\n{content}\n{metadata_text}".lower()
+    has_image_task = any(term.lower() in candidate_text for term in TEMPORARY_IMAGE_TASK_TERMS)
+    has_image_detail = any(term.lower() in candidate_text for term in TEMPORARY_IMAGE_DETAIL_TERMS)
+    if has_image_task and has_image_detail:
+        return "temporary_image_request_without_durable_marker"
+    return ""
 
 
 def contains_forbidden_memory_text(*values: object) -> bool:

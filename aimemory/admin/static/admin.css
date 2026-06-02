@@ -549,15 +549,17 @@ th {
 }
 
 .memory-table .col-select {
-  width: 78px;
+  width: 132px;
 }
 
 .select-header-controls {
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .select-all-control {
@@ -565,12 +567,23 @@ th {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 32px;
+  min-width: 56px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   user-select: none;
+}
+
+.select-all-control span {
+  white-space: nowrap;
 }
 
 .select-all-control input,

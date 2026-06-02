@@ -167,6 +167,89 @@ def test_extract_schedules_auto_merge_background_task(monkeypatch) -> None:
     assert scheduled == [(str(user_id), "assistant", [str(memory_id)])]
 
 
+def test_extract_skips_temporary_image_request_and_logs_reason(monkeypatch) -> None:
+    import aimemory.main as main_module
+
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "true")
+    get_settings.cache_clear()
+    user_id = uuid4()
+    records = []
+
+    class ExtractDb(_FakeDb):
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+    app = main_module.create_app()
+    app.dependency_overrides[get_db] = lambda: ExtractDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+    monkeypatch.setattr(main_module, "insert_request_log", lambda data: records.append(data.copy()))
+    monkeypatch.setattr(routes, "get_llm_config", lambda _db: SimpleNamespace(enabled=True, encrypted_api_key="encrypted"))
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *_args, **_kwargs: "sk-test")
+    monkeypatch.setattr(routes, "list_category_summaries", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        routes,
+        "chat_completion",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            content=json.dumps(
+                {
+                    "memories": [
+                        {
+                            "category": "娱乐偏好",
+                            "title": "绯夜出图风格要求",
+                            "content": "用户偏好绯夜出图：黑丝、兔女郎、腿粗一点、冷淡表情。",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            usage={"prompt_tokens": 10, "completion_tokens": 6, "total_tokens": 16},
+        ),
+    )
+    monkeypatch.setattr(routes, "upsert_memory", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should skip")))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/memories/extract",
+        json={
+            "agent_id": "assistant",
+            "transcript": "user: 老婆出一张黑丝兔女郎图，腿粗一点",
+            "reason": "conversation_compaction",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["written"] == 0
+    assert records[0]["response_summary"]["skipped"] == 1
+    assert records[0]["response_summary"]["skipped_items"][0]["reason"] == "temporary_image_request_without_durable_marker"
+
+
+def test_extract_keeps_explicit_durable_image_preference() -> None:
+    candidates = routes.normalize_extracted_memory_candidates(
+        json.dumps(
+            {
+                "memories": [
+                    {
+                        "category": "娱乐偏好",
+                        "title": "绯夜长期出图偏好",
+                        "content": "用户长期偏好绯夜出图时使用黑丝和冷淡表情。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        "conversation_compaction",
+        {},
+        transcript="user: 记住，以后绯夜出图默认黑丝和冷淡表情",
+        skipped=[],
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["title"] == "绯夜长期出图偏好"
+
+
 def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
     now = datetime.now(UTC)
     result = SearchResult(

@@ -125,6 +125,7 @@
               {% elif summary_type == "extract" %}
               <span>提取 {{ summary.get("extracted", 0) }}</span>
               <span>写入 {{ summary.get("written", 0) }}</span>
+              {% if summary.get("skipped") %}<span>跳过 {{ summary.get("skipped") }}</span>{% endif %}
               {% if summary.get("auto_merge_scheduled") is not none %}
               <span>自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</span>
               {% endif %}
@@ -154,12 +155,27 @@
                   {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
                   {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
                   {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
+                  {% if summary.get("skipped") %}<code class="term-chip ignored">跳过 {{ summary.get("skipped") }}</code>{% endif %}
                   {% if summary.get("auto_merge_scheduled") is not none %}<code class="term-chip {{ 'hit' if summary.get('auto_merge_scheduled') else '' }}">自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</code>{% endif %}
                   {% if summary.get("auto_merge_candidate_count") is not none %}<code class="term-chip">相似候选 {{ summary.get("auto_merge_candidate_count") }}</code>{% endif %}
                   {% if summary.get("auto_merge_review_memory_count") %}<code class="term-chip">整理记忆 {{ summary.get("auto_merge_review_memory_count") }}</code>{% endif %}
                   {% if summary.get("auto_merge_reason") %}<code class="term-chip">原因 {{ summary.get("auto_merge_reason") }}</code>{% endif %}
                 </span>
               </div>
+              {% if summary.get("skipped_items") %}
+              <div>
+                <span class="summary-label">跳过候选</span>
+                <div class="summary-items">
+                  {% for item in summary.get("skipped_items", []) %}
+                  <div class="summary-memory-card">
+                    <strong>{{ item.get("title") or "未命名" }}</strong>
+                    {% if item.get("category") %}<code>{{ item.get("category") }}</code>{% endif %}
+                    {% if item.get("reason") %}<span class="muted">原因 {{ item.get("reason") }}</span>{% endif %}
+                  </div>
+                  {% endfor %}
+                </div>
+              </div>
+              {% endif %}
               {% endif %}
               {% if summary_type == "write" %}
               <div>
