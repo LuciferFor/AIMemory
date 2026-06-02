@@ -39,7 +39,7 @@ test("env/config merge prefers AIMEMORY env values", () => {
   assert.equal(config.apiKey, "aim_test");
   assert.equal(config.agentId, "env-agent");
   assert.equal(config.topK, 50);
-  assert.equal(config.fallbackCategory, "未分类");
+  assert.equal(config.fallbackCategory, "其它");
   assert.equal(config.preloadContextOnMessageReceived, true);
   assert.equal(config.includePromptInMemoryQuery, false);
   assert.equal(config.includeUnstructuredTranscriptForCompaction, false);
@@ -390,7 +390,7 @@ test("runtime message_received preloads context without prompt build", async () 
       },
       llm: {
         async complete() {
-          return '{"category":"未分类"}';
+          return '{"category":"其它"}';
         },
       },
     },
@@ -398,7 +398,7 @@ test("runtime message_received preloads context without prompt build", async () 
   registerAIMemoryRuntime(api, {
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
-        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ name: "其它" }] }), { status: 200 });
       }
       contextBodies.push(JSON.parse(request.body));
       return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
@@ -418,7 +418,7 @@ test("runtime message_received preloads context without prompt build", async () 
 
   assert.equal(contextBodies.length, 1);
   assert.equal(contextBodies[0].query, "老婆出个兔女郎的");
-  assert.equal(contextBodies[0].category, "未分类");
+  assert.equal(contextBodies[0].category, "其它");
 });
 
 test("runtime falls back to default category when category model is unavailable", async () => {
@@ -440,7 +440,7 @@ test("runtime falls back to default category when category model is unavailable"
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(
-          JSON.stringify({ items: [{ name: "回答风格" }, { name: "未分类" }] }),
+          JSON.stringify({ items: [{ name: "回答风格" }, { name: "其它" }] }),
           { status: 200 },
         );
       }
@@ -458,7 +458,7 @@ test("runtime falls back to default category when category model is unavailable"
   await handlers.before_prompt_build({ userInput: "你现在是什么模型", chatType: "direct" }, {});
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "未分类");
+  assert.equal(contextBodies[0].category, "其它");
 });
 
 test("runtime uses technical heuristic category when category model is unavailable", async () => {
@@ -480,7 +480,7 @@ test("runtime uses technical heuristic category when category model is unavailab
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(
-          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "其它" }] }),
           { status: 200 },
         );
       }
@@ -516,7 +516,7 @@ test("runtime overrides model fallback category with technical heuristic", async
       },
       llm: {
         async complete() {
-          return '{"category":"未分类"}';
+          return '{"category":"其它"}';
         },
       },
     },
@@ -525,7 +525,7 @@ test("runtime overrides model fallback category with technical heuristic", async
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(
-          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "其它" }] }),
           { status: 200 },
         );
       }
@@ -565,7 +565,7 @@ test("runtime refreshes preloaded fallback category when prompt hook can use llm
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(
-          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "其它" }] }),
           { status: 200 },
         );
       }
@@ -595,7 +595,7 @@ test("runtime refreshes preloaded fallback category when prompt hook can use llm
   );
 
   assert.equal(contextBodies.length, 2);
-  assert.equal(contextBodies[0].category, "未分类");
+  assert.equal(contextBodies[0].category, "其它");
   assert.equal(contextBodies[1].category, "技术记忆");
 });
 
@@ -618,7 +618,7 @@ test("runtime defers message preload instead of using fallback when llm is unava
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
         return new Response(
-          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "未分类" }] }),
+          JSON.stringify({ items: [{ name: "技术记忆" }, { name: "其它" }] }),
           { status: 200 },
         );
       }
@@ -748,7 +748,7 @@ test("runtime uses one-shot message_received user input instead of internal role
       },
       llm: {
         async complete() {
-          return '{"category":"未分类"}';
+          return '{"category":"其它"}';
         },
       },
     },
@@ -756,7 +756,7 @@ test("runtime uses one-shot message_received user input instead of internal role
   registerAIMemoryRuntime(api, {
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
-        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ name: "其它" }] }), { status: 200 });
       }
       contextBodies.push(JSON.parse(request.body));
       return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });
@@ -801,7 +801,7 @@ test("runtime uses fallback user input when prompt build has a different turn ke
       },
       llm: {
         async complete() {
-          return '{"category":"未分类"}';
+          return '{"category":"其它"}';
         },
       },
     },
@@ -809,7 +809,7 @@ test("runtime uses fallback user input when prompt build has a different turn ke
   registerAIMemoryRuntime(api, {
     fetchImpl: async (url, request) => {
       if (String(url).endsWith("/v1/memories/categories")) {
-        return new Response(JSON.stringify({ items: [{ name: "未分类" }] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ name: "其它" }] }), { status: 200 });
       }
       contextBodies.push(JSON.parse(request.body));
       return new Response(JSON.stringify({ context_text: "", items: [] }), { status: 200 });

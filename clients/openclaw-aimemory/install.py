@@ -68,7 +68,7 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
             "topK": args.top_k,
             "maxChars": args.max_chars,
             "timeoutMs": args.timeout_ms,
-            "fallbackCategory": "未分类",
+            "fallbackCategory": "其它",
             "preloadContextOnMessageReceived": True,
             "saveOnExplicitRemember": True,
             "saveBeforeCompaction": True,

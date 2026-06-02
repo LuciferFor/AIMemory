@@ -82,7 +82,7 @@ def build_review_messages(
     categories: list[str],
     prompt_injection: str = "",
 ) -> list[dict[str, str]]:
-    category_text = "\n".join(f"- {category}" for category in categories) or "- 未分类"
+    category_text = "\n".join(f"- {category}" for category in categories) or "- 其它"
     payload = {
         "categories": categories,
         "memories": memories,

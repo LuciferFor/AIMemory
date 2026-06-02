@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   topK: 8,
   maxChars: 3000,
   timeoutMs: 3000,
-  fallbackCategory: "未分类",
+  fallbackCategory: "其它",
   preloadContextOnMessageReceived: true,
   saveOnExplicitRemember: true,
   saveBeforeCompaction: true,
@@ -813,7 +813,7 @@ export function buildCategorySelectionMessages(categories, query) {
     {
       role: "system",
       content:
-        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；优先选择最接近的已有分类，不要轻易选择“未分类”或 null。涉及部署、接口、插件、数据库、OneBot、OpenClaw、AIMemory、报错和连接问题时，应优先选择技术/流程/资料/自动化等最接近分类。只有完全无法判断时才输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
+        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；优先选择最接近的已有分类，不要轻易选择兜底分类或 null。涉及部署、接口、插件、数据库、OneBot、OpenClaw、AIMemory、报错和连接问题时，应优先选择技术/流程/资料/自动化等最接近分类。只有完全无法判断时才输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
     },
     {
       role: "user",

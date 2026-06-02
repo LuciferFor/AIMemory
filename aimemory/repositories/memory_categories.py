@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from aimemory.models.memory import Memory
 from aimemory.models.memory_category import MemoryCategory
 
-UNCATEGORIZED_CATEGORY = "未分类"
+UNCATEGORIZED_CATEGORY = "其它"
 
 
 @dataclass(frozen=True)

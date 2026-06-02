@@ -68,7 +68,7 @@
       },
       "fallbackCategory": {
         "type": "string",
-        "default": "未分类"
+        "default": "其它"
       },
       "preloadContextOnMessageReceived": {
         "type": "boolean",

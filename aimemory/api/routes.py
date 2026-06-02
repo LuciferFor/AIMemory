@@ -740,7 +740,7 @@ def preview_multiline_text(value: object, max_chars: int) -> str:
 
 
 def build_extract_memory_messages(transcript: str, categories: list[str], reason: str) -> list[dict[str, str]]:
-    category_text = "\n".join(f"- {category}" for category in categories) or "- 未分类"
+    category_text = "\n".join(f"- {category}" for category in categories) or "- 其它"
     return [
         {
             "role": "system",
