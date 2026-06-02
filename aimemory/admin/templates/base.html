@@ -55,7 +55,12 @@
       if (!name) {
         return [];
       }
+      const filter = master.dataset.selectFilter || "";
       return Array.from(document.getElementsByName(name)).filter(function (item) {
+        const row = item.closest("tr");
+        if (filter === "not-ai-applied" && row && row.classList.contains("is-ai-applied")) {
+          return false;
+        }
         return item instanceof HTMLInputElement && item.type === "checkbox" && !item.disabled;
       });
     }
@@ -73,10 +78,19 @@
         return;
       }
       if (target.dataset.selectAll) {
+        const filter = target.dataset.selectFilter || "";
+        if (filter && target.checked) {
+          for (const item of Array.from(document.getElementsByName(target.dataset.selectAll))) {
+            if (item instanceof HTMLInputElement && item.type === "checkbox" && !item.disabled) {
+              item.checked = false;
+            }
+          }
+        }
         for (const item of selectAllTargets(target)) {
           item.checked = target.checked;
         }
         syncSelectAll(target);
+        document.querySelectorAll("[data-select-all='" + target.dataset.selectAll + "']").forEach(syncSelectAll);
         return;
       }
       document.querySelectorAll("[data-select-all='" + target.name + "']").forEach(syncSelectAll);

@@ -125,6 +125,12 @@
               {% elif summary_type == "extract" %}
               <span>提取 {{ summary.get("extracted", 0) }}</span>
               <span>写入 {{ summary.get("written", 0) }}</span>
+              {% if summary.get("auto_merge_scheduled") is not none %}
+              <span>自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</span>
+              {% endif %}
+              {% if summary.get("auto_merge_candidate_count") %}
+              <span>相似候选 {{ summary.get("auto_merge_candidate_count") }}</span>
+              {% endif %}
               {% if summary.get("deduplicated") %}<span>重复请求已跳过</span>{% endif %}
               {% else %}
               <span>业务摘要</span>
@@ -148,6 +154,10 @@
                   {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
                   {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
                   {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
+                  {% if summary.get("auto_merge_scheduled") is not none %}<code class="term-chip {{ 'hit' if summary.get('auto_merge_scheduled') else '' }}">自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</code>{% endif %}
+                  {% if summary.get("auto_merge_candidate_count") is not none %}<code class="term-chip">相似候选 {{ summary.get("auto_merge_candidate_count") }}</code>{% endif %}
+                  {% if summary.get("auto_merge_review_memory_count") %}<code class="term-chip">整理记忆 {{ summary.get("auto_merge_review_memory_count") }}</code>{% endif %}
+                  {% if summary.get("auto_merge_reason") %}<code class="term-chip">原因 {{ summary.get("auto_merge_reason") }}</code>{% endif %}
                 </span>
               </div>
               {% endif %}

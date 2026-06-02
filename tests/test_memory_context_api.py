@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -96,6 +97,74 @@ def test_context_returns_empty_text_without_memories(monkeypatch) -> None:
     assert body["context_text"] == ""
     assert body["items"] == []
     assert body["usage_hint"]["recommended_position"] == "system_or_developer_context"
+
+
+def test_extract_schedules_auto_merge_background_task(monkeypatch) -> None:
+    monkeypatch.setenv("REQUEST_LOG_DB_ENABLED", "false")
+    get_settings.cache_clear()
+    user_id = uuid4()
+    memory_id = uuid4()
+    scheduled = []
+
+    class ExtractDb(_FakeDb):
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            pass
+
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: ExtractDb()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+    monkeypatch.setattr(routes, "get_llm_config", lambda _db: SimpleNamespace(enabled=True, encrypted_api_key="encrypted"))
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *_args, **_kwargs: "sk-test")
+    monkeypatch.setattr(routes, "list_category_summaries", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        routes,
+        "chat_completion",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            content=json.dumps(
+                [
+                    {
+                        "category": "工作流程",
+                        "title": "部署诊断直接执行",
+                        "content": "助手应直接执行部署诊断并给简短结论。",
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        ),
+    )
+    monkeypatch.setattr(
+        routes,
+        "upsert_memory",
+        lambda *_args, **_kwargs: (SimpleNamespace(id=memory_id), "created"),
+    )
+    monkeypatch.setattr(
+        routes,
+        "build_auto_merge_candidate_memory_ids",
+        lambda *_args, **_kwargs: ([memory_id, uuid4()], 1),
+    )
+    monkeypatch.setattr(
+        routes,
+        "run_auto_merge_review_for_extracted_memories",
+        lambda user, agent, memory_ids: scheduled.append((user, agent, memory_ids)),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/memories/extract",
+        json={
+            "agent_id": "assistant",
+            "transcript": "user: 部署怎么检查\nassistant: 直接检查并给结论",
+            "reason": "conversation_compaction",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["written"] == 1
+    assert scheduled == [(str(user_id), "assistant", [str(memory_id)])]
 
 
 def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:

@@ -549,7 +549,15 @@ th {
 }
 
 .memory-table .col-select {
-  width: 60px;
+  width: 78px;
+}
+
+.select-header-controls {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .select-all-control {

@@ -1265,7 +1265,9 @@ def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
     assert "改写压缩 / 2026-05-30 19:02:00 北京时间" in response.text
     assert "col-actions" in response.text
     assert "全选" in response.text
+    assert "未 AI" in response.text
     assert 'data-select-all="memory_ids"' in response.text
+    assert 'data-select-filter="not-ai-applied"' in response.text
     assert "action-buttons" in response.text
     assert "action-button detail" in response.text
     assert "action-button danger" in response.text

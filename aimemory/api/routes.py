@@ -5,7 +5,7 @@ import time
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse, Response
@@ -46,7 +46,11 @@ from aimemory.schemas.memory import (
 )
 from aimemory.services.attachments import AttachmentValidationError
 from aimemory.services.ai_crypto import decrypt_secret
-from aimemory.services.ai_memory_review import get_llm_config
+from aimemory.services.ai_memory_review import (
+    build_auto_merge_candidate_memory_ids,
+    get_llm_config,
+    run_auto_merge_review_for_extracted_memories,
+)
 from aimemory.services.category_analysis import CategoryAnalysis, analyze_memory_category
 from aimemory.services.openai_compatible import chat_completion, token_usage_summary
 from aimemory.services.query_analysis import (
@@ -365,6 +369,7 @@ def get_write_policy(
 def extract_memory_from_transcript(
     request: Request,
     payload: MemoryExtractRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryExtractResponse:
@@ -405,11 +410,13 @@ def extract_memory_from_transcript(
     usage = token_usage_summary(result.usage)
     candidates = normalize_extracted_memory_candidates(result.content, payload.reason, payload.metadata)
     written_items: list[MemoryExtractItem] = []
+    written_memory_ids: list[UUID] = []
     for candidate in candidates:
         try:
             memory_payload = MemoryUpsertRequest(agent_id=payload.agent_id, **candidate)
             _memory, action = upsert_memory(db, current_user.id, memory_payload)
             db.commit()
+            written_memory_ids.append(_memory.id)
             written_items.append(
                 MemoryExtractItem(
                     external_id=memory_payload.external_id,
@@ -431,6 +438,20 @@ def extract_memory_from_transcript(
                 },
             )
 
+    auto_merge_summary = build_auto_merge_extract_summary(
+        db,
+        current_user.id,
+        payload.agent_id,
+        written_memory_ids,
+    )
+    if auto_merge_summary["auto_merge_scheduled"]:
+        background_tasks.add_task(
+            run_auto_merge_review_for_extracted_memories,
+            str(current_user.id),
+            payload.agent_id,
+            [str(memory_id) for memory_id in written_memory_ids],
+        )
+
     response = MemoryExtractResponse(extracted=len(candidates), written=len(written_items), items=written_items)
     request.state.request_log_response_summary = {
         "type": "extract",
@@ -442,6 +463,7 @@ def extract_memory_from_transcript(
         "ai_usage": usage,
         "ai_total_tokens": token_total(usage),
         "ai_request_total_tokens": token_total(usage),
+        **auto_merge_summary,
         "items": [item.model_dump() for item in response.items[:20]],
     }
     logger.info(
@@ -1163,6 +1185,49 @@ def build_extract_memory_messages(transcript: str, categories: list[str], reason
             ),
         },
     ]
+
+
+def build_auto_merge_extract_summary(
+    db: Session,
+    user_id: UUID,
+    agent_id: str,
+    written_memory_ids: list[UUID],
+) -> dict[str, Any]:
+    summary = {
+        "auto_merge_scheduled": False,
+        "auto_merge_candidate_count": 0,
+        "auto_merge_reason": "no_written_memories" if not written_memory_ids else "not_checked",
+    }
+    if not written_memory_ids:
+        return summary
+    try:
+        review_memory_ids, candidate_count = build_auto_merge_candidate_memory_ids(
+            db,
+            user_id=user_id,
+            agent_id=agent_id,
+            seed_memory_ids=written_memory_ids,
+        )
+    except Exception as exc:
+        logger.warning(
+            "memory.extract.auto_merge_candidate_check_failed",
+            extra={
+                "event": "memory.extract.auto_merge_candidate_check_failed",
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "reason": str(exc)[:300],
+            },
+        )
+        summary["auto_merge_reason"] = "candidate_check_failed"
+        return summary
+
+    summary["auto_merge_candidate_count"] = candidate_count
+    if candidate_count <= 0 or len(review_memory_ids) < 2:
+        summary["auto_merge_reason"] = "no_similar_candidates"
+        return summary
+    summary["auto_merge_scheduled"] = True
+    summary["auto_merge_reason"] = "similar_candidates"
+    summary["auto_merge_review_memory_count"] = len(review_memory_ids)
+    return summary
 
 
 def extract_request_dedupe_key(user_id: UUID, payload: MemoryExtractRequest) -> str:

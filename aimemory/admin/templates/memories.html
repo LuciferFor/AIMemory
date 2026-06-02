@@ -129,10 +129,16 @@
     <thead>
       <tr>
         <th>
-          <label class="select-all-control" title="选中当前页所有未删除记忆">
-            <input type="checkbox" data-select-all="memory_ids" aria-label="全选当前页记忆">
-            <span>全选</span>
-          </label>
+          <div class="select-header-controls">
+            <label class="select-all-control" title="选中当前页所有未删除记忆">
+              <input type="checkbox" data-select-all="memory_ids" aria-label="全选当前页记忆">
+              <span>全选</span>
+            </label>
+            <label class="select-all-control" title="只选当前页未通过 AI 应用建议处理过的未删除记忆">
+              <input type="checkbox" data-select-all="memory_ids" data-select-filter="not-ai-applied" aria-label="选择未通过 AI 处理过的记忆">
+              <span>未 AI</span>
+            </label>
+          </div>
         </th>
         <th>记忆</th>
         <th>分类</th>
