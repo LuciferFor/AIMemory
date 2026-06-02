@@ -51,6 +51,7 @@ export async function fetchCodexAppServerMemoryContext(params = {}, options = {}
       "/v1/memories/context",
       {
         agent_id: config.agentId,
+        ...(config.deviceId ? { device_id: config.deviceId } : {}),
         query,
         top_k: config.topK,
         max_chars: config.maxChars,

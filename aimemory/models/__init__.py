@@ -4,8 +4,10 @@ from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSu
 from aimemory.models.embedding_job import EmbeddingJob
 from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory import Memory
+from aimemory.models.memory_agent import MemoryAgent
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.memory_category import MemoryCategory
+from aimemory.models.memory_device import MemoryDevice
 from aimemory.models.request_log import RequestLog
 from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
@@ -19,8 +21,10 @@ __all__ = [
     "EmbeddingJob",
     "LlmProviderConfig",
     "Memory",
+    "MemoryAgent",
     "MemoryAttachment",
     "MemoryCategory",
+    "MemoryDevice",
     "RequestLog",
     "SearchStopword",
     "User",

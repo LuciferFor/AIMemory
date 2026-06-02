@@ -6,6 +6,7 @@
   --muted: #657385;
   --accent: #2563eb;
   --accent-strong: #1d4ed8;
+  --primary: #2563eb;
   --danger: #b42318;
   --warning: #a16207;
   --ok: #15803d;
@@ -114,6 +115,31 @@ label {
 code {
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
+}
+
+.env-snippet {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.inline-edit-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(160px, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.identity-subline {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .shell {
@@ -2600,4 +2626,1228 @@ pre {
     height: auto;
     max-height: none;
   }
+}
+
+/* Unified admin polish: keep every backend page on the same white, compact style. */
+.shell {
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.sidebar {
+  gap: 16px;
+  padding: 20px 16px;
+  background: #f8fafc;
+}
+
+.brand {
+  min-height: 42px;
+  justify-content: flex-start;
+  padding: 0 4px;
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.brand-mark {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: #eaf1ff;
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.nav {
+  gap: 6px;
+}
+
+.nav a,
+.logout button {
+  min-height: 42px;
+  border-radius: 14px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.logout button {
+  border-color: #dbe5f2;
+  background: #ffffff;
+}
+
+.nav a.active,
+.nav a:hover {
+  background: #eaf2ff;
+  color: var(--accent-strong);
+}
+
+.main {
+  max-width: none;
+  padding: 28px 32px;
+}
+
+.topbar {
+  min-height: 56px;
+  margin: 0 auto 22px;
+}
+
+.topbar h1 {
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.topbar p {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.panel,
+.memory-item,
+.metric,
+.info-panel,
+.login-panel {
+  border-color: #dbe5f2;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.035);
+}
+
+.panel {
+  margin-bottom: 18px;
+  padding: 18px;
+}
+
+.memory-table-panel,
+.request-log-table-panel {
+  padding: 0;
+  overflow-x: auto;
+}
+
+button,
+.primary,
+.button-link,
+.action-button,
+.ai-thread-icon-link,
+.ai-new-chat-button {
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+button,
+.primary,
+.button-link {
+  min-height: 40px;
+  padding: 0 16px;
+}
+
+button.primary,
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.primary:hover,
+.primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+button.secondary,
+.secondary {
+  min-height: 40px;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: var(--accent-strong);
+}
+
+input,
+select,
+textarea {
+  min-height: 40px;
+  border-color: #d8e2f0;
+  border-radius: 10px;
+}
+
+.filter-grid,
+.form-grid {
+  gap: 12px;
+}
+
+.filter-grid button[type="submit"],
+.form-grid button[type="submit"] {
+  min-width: 120px;
+}
+
+table {
+  color: #0f172a;
+}
+
+th {
+  color: #5d6d80;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+td {
+  font-size: 14px;
+}
+
+.data-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+
+.data-table th,
+.data-table td {
+  padding: 14px 12px;
+  word-break: break-word;
+}
+
+.data-table code,
+.env-snippet {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.inline-edit-form {
+  grid-template-columns: minmax(120px, 0.9fr) minmax(160px, 1.1fr) auto;
+}
+
+.memory-table {
+  min-width: 1160px;
+}
+
+.memory-table th,
+.memory-table td {
+  padding: 14px 12px;
+}
+
+.memory-table .col-select {
+  width: 172px;
+}
+
+.memory-table .col-memory {
+  width: 29%;
+}
+
+.memory-table .col-category {
+  width: 10%;
+}
+
+.memory-table .col-owner {
+  width: 15%;
+}
+
+.memory-table .col-attachments {
+  width: 8%;
+}
+
+.memory-table .col-time {
+  width: 15%;
+}
+
+.memory-table .col-status {
+  width: 8%;
+}
+
+.memory-table .col-actions {
+  width: 160px;
+}
+
+.select-header-controls {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.select-all-control {
+  flex: 1 1 0;
+  min-width: 74px;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 10px;
+  line-height: 1;
+}
+
+.select-all-control input,
+.select-cell input {
+  flex: 0 0 auto;
+}
+
+.select-all-control span {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.action-cell {
+  min-width: 160px;
+}
+
+.action-buttons,
+.actions,
+.category-actions {
+  gap: 8px;
+}
+
+.action-button {
+  width: 64px;
+  min-width: 64px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+}
+
+.action-button.detail {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.action-button.danger {
+  background: #fff7f7;
+  color: #dc2626;
+}
+
+.badge,
+.user-chip,
+.business-chip,
+.method-chip,
+.ai-token-chip,
+.term-chip {
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.time-stack {
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.time-stack span {
+  grid-template-columns: 40px minmax(88px, 1fr);
+  gap: 8px;
+}
+
+.owner-cell strong,
+.owner-cell .muted,
+.owner-cell code {
+  display: block;
+  margin: 3px auto 0;
+  max-width: 100%;
+}
+
+.memory-title-cell strong {
+  font-weight: 850;
+}
+
+.request-log-table {
+  min-width: 1260px;
+}
+
+.request-log-table th,
+.request-log-table td {
+  padding: 14px 12px;
+}
+
+.request-cell strong,
+.request-cell code,
+.client-cell code,
+.identity-subline {
+  min-width: 0;
+}
+
+.request-log-detail-row > td {
+  padding: 0 16px 14px;
+}
+
+.request-log-summary {
+  max-width: 1040px;
+}
+
+.summary-query {
+  max-width: 860px;
+  border-radius: 12px;
+}
+
+/* AI chat now lives inside the same admin shell; keep its inner panel from changing the page chrome. */
+.ai-chat-page {
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  height: calc(100vh - 156px);
+  min-height: 640px;
+}
+
+.ai-chat-page .ai-thread-sidebar,
+.ai-chat-page .ai-chat-workspace {
+  border-color: #dbe5f2;
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.035);
+}
+
+.ai-thread-sidebar {
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.ai-thread-head strong,
+.ai-chat-workspace-head h2,
+.ai-chat-hero h2 {
+  font-weight: 900;
+}
+
+.ai-new-chat-button {
+  min-height: 46px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: var(--accent-strong);
+}
+
+.ai-thread-row {
+  min-height: 56px;
+  border-radius: 12px;
+}
+
+.ai-thread-row:hover,
+.ai-thread-row.active {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
+.ai-thread-item {
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.ai-chat-workspace-head {
+  min-height: 72px;
+}
+
+.ai-message-card,
+.ai-compose {
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.04);
+}
+
+.ai-compose {
+  width: min(900px, calc(100% - 40px));
+  border-radius: 22px;
+}
+
+.ai-send-button {
+  border-radius: 14px;
+}
+
+@media (max-width: 1180px) {
+  .shell {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .main {
+    padding: 24px;
+  }
+
+  .memory-table,
+  .request-log-table,
+  .data-table {
+    min-width: 1060px;
+  }
+
+  .ai-chat-page {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .brand {
+    justify-content: center;
+  }
+
+  .sidebar {
+    height: auto;
+  }
+
+  .nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ai-chat-page {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* Agent/device management has editable rows, so it needs wider, purpose-built columns. */
+.agents-table {
+  min-width: 1320px;
+  table-layout: fixed;
+}
+
+.agents-table .col-user {
+  width: 9%;
+}
+
+.agents-table .col-edit {
+  width: 24%;
+}
+
+.agents-table .col-agent-id {
+  width: 20%;
+}
+
+.agents-table .col-description {
+  width: 21%;
+}
+
+.agents-table .col-count {
+  width: 8%;
+}
+
+.agents-table .col-status {
+  width: 8%;
+}
+
+.agents-table .col-actions {
+  width: 10%;
+}
+
+.devices-table {
+  min-width: 1360px;
+  table-layout: fixed;
+}
+
+.devices-table .col-user {
+  width: 9%;
+}
+
+.devices-table .col-device {
+  width: 30%;
+}
+
+.devices-table .col-bound-agent {
+  width: 22%;
+}
+
+.devices-table .col-env {
+  width: 23%;
+}
+
+.devices-table .col-status {
+  width: 8%;
+}
+
+.devices-table .col-actions {
+  width: 8%;
+}
+
+.agents-table td,
+.devices-table td {
+  height: auto;
+  min-height: 92px;
+}
+
+.agents-table .edit-cell,
+.devices-table .edit-cell {
+  text-align: center;
+}
+
+.agent-inline-form,
+.device-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px;
+  grid-template-areas:
+    "name save"
+    "description description";
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.device-inline-form {
+  grid-template-areas:
+    "name save"
+    "description description"
+    "agent agent";
+}
+
+.agent-inline-form .edit-name,
+.device-inline-form .edit-name {
+  grid-area: name;
+}
+
+.agent-inline-form .edit-description,
+.device-inline-form .edit-description {
+  grid-area: description;
+}
+
+.device-inline-form .edit-agent {
+  grid-area: agent;
+}
+
+.agent-inline-form .action-button,
+.device-inline-form .action-button {
+  grid-area: save;
+  width: 68px;
+  min-width: 68px;
+}
+
+.agent-inline-form input,
+.device-inline-form input,
+.device-inline-form select {
+  min-width: 0;
+}
+
+.agents-table .id-cell,
+.devices-table .id-cell {
+  text-align: center;
+}
+
+.agents-table .id-cell code,
+.devices-table .id-cell code {
+  display: block;
+  max-width: 100%;
+  margin: 4px auto 0;
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.devices-table .env-snippet {
+  max-width: 260px;
+  margin: 0 auto;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Category management: prefer one-line rows and horizontal scroll over cramped wrapping. */
+.categories-table-panel {
+  overflow-x: auto;
+}
+
+.category-table {
+  min-width: 1860px;
+  table-layout: fixed;
+}
+
+.category-table .col-user {
+  width: 130px;
+}
+
+.category-table .col-category-name {
+  width: 170px;
+}
+
+.category-table .col-description {
+  width: 520px;
+}
+
+.category-table .col-count {
+  width: 90px;
+}
+
+.category-table .col-edit {
+  width: 560px;
+}
+
+.category-table .col-merge {
+  width: 390px;
+}
+
+.category-table th,
+.category-table td {
+  white-space: nowrap;
+}
+
+.nowrap-cell,
+.nowrap-cell strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ellipsis-cell {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-edit-form,
+.category-merge-form,
+.category-actions {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.category-edit-form {
+  width: 100%;
+}
+
+.category-edit-form input {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.category-edit-form button,
+.category-merge-form button,
+.category-actions > form:last-child button {
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.category-merge-form {
+  flex: 0 0 auto;
+}
+
+.category-merge-form select {
+  width: 170px;
+  min-width: 170px;
+  max-width: 170px;
+}
+
+.category-actions {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+}
+
+.category-actions form {
+  flex: 0 0 auto;
+}
+
+/* AI settings page: explicit sections beat auto-flow grids for this dense form. */
+.ai-settings-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.ai-settings-form {
+  display: grid;
+  gap: 18px;
+}
+
+.ai-settings-section {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-settings-section + .ai-settings-section {
+  border-top: 1px solid #edf1f6;
+  padding-top: 16px;
+}
+
+.ai-settings-section h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.ai-settings-grid {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+.ai-settings-grid.one {
+  grid-template-columns: 1fr;
+}
+
+.ai-settings-grid.three {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+.ai-settings-grid.four {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(200px, 1fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr);
+  align-items: end;
+}
+
+.ai-settings-grid label {
+  min-width: 0;
+}
+
+.ai-settings-form textarea {
+  min-height: 120px;
+}
+
+.ai-settings-form .prompt-textarea {
+  min-height: 150px;
+}
+
+.ai-settings-grid .checkbox-line {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #d8e2f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.ai-settings-grid .checkbox-line input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  accent-color: var(--accent);
+}
+
+.ai-settings-actions,
+.ai-settings-test-form {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ai-settings-actions {
+  border-top: 1px solid #edf1f6;
+  padding-top: 18px;
+}
+
+.ai-settings-actions .primary {
+  min-width: 160px;
+}
+
+.ai-settings-test-form {
+  margin-top: -8px;
+}
+
+.ai-settings-test-form .secondary {
+  min-width: 120px;
+}
+
+@media (max-width: 1180px) {
+  .ai-settings-grid.three,
+  .ai-settings-grid.four {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .ai-settings-grid.three,
+  .ai-settings-grid.four {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dark theme: default for the admin UI, with localStorage toggle support. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f12;
+  --surface: #161a20;
+  --surface-soft: #1c222a;
+  --surface-strong: #222935;
+  --line: #2d3542;
+  --text: #e8eef7;
+  --muted: #9aa8ba;
+  --accent: #6aa7ff;
+  --accent-strong: #9bc2ff;
+  --primary: #4f8cff;
+  --danger: #ff8a80;
+  --warning: #f7c96b;
+  --ok: #67d98b;
+}
+
+html[data-theme="dark"] body,
+html[data-theme="dark"] .ai-chat-body,
+html[data-theme="dark"] .login-body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html[data-theme="dark"] a {
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] .sidebar,
+html[data-theme="dark"] .ai-chat-sidebar,
+html[data-theme="dark"] .ai-thread-sidebar {
+  border-color: var(--line);
+  background: #12161c;
+}
+
+html[data-theme="dark"] .brand,
+html[data-theme="dark"] .topbar h1,
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] .ai-settings-section h2,
+html[data-theme="dark"] .ai-chat-title,
+html[data-theme="dark"] .ai-chat-page h1,
+html[data-theme="dark"] .ai-chat-page h2 {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .brand-mark {
+  background: #182235;
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px #31415c;
+}
+
+html[data-theme="dark"] .nav a,
+html[data-theme="dark"] .logout button,
+html[data-theme="dark"] .theme-toggle {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .nav a.active,
+html[data-theme="dark"] .nav a:hover,
+html[data-theme="dark"] .theme-toggle {
+  background: #1d2a3d;
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] .theme-toggle {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #33445c;
+  border-radius: 14px;
+  font-weight: 850;
+}
+
+html[data-theme="light"] .theme-toggle {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 14px;
+  font-weight: 850;
+}
+
+html[data-theme="dark"] .main,
+html[data-theme="dark"] .ai-chat-main {
+  background: var(--bg);
+}
+
+html[data-theme="dark"] .panel,
+html[data-theme="dark"] .memory-item,
+html[data-theme="dark"] .metric,
+html[data-theme="dark"] .login-panel,
+html[data-theme="dark"] .secret-box,
+html[data-theme="dark"] .ai-review-history-table,
+html[data-theme="dark"] .ai-settings-panel,
+html[data-theme="dark"] .ai-thread-link,
+html[data-theme="dark"] .ai-chat-card,
+html[data-theme="dark"] .ai-chat-composer,
+html[data-theme="dark"] .ai-empty-state,
+html[data-theme="dark"] .message-card,
+html[data-theme="dark"] .request-log-summary,
+html[data-theme="dark"] .summary-card,
+html[data-theme="dark"] .review-card,
+html[data-theme="dark"] .env-snippet,
+html[data-theme="dark"] pre,
+html[data-theme="dark"] .sql-block {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  border-color: #344052;
+  background: #11161d;
+  color: var(--text);
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #7f8b9d;
+}
+
+html[data-theme="dark"] option {
+  background: #11161d;
+  color: var(--text);
+}
+
+html[data-theme="dark"] label,
+html[data-theme="dark"] .muted,
+html[data-theme="dark"] .hint,
+html[data-theme="dark"] .topbar p,
+html[data-theme="dark"] .empty,
+html[data-theme="dark"] .identity-subline,
+html[data-theme="dark"] .owner-cell code,
+html[data-theme="dark"] .time-stack b,
+html[data-theme="dark"] .deleted-time,
+html[data-theme="dark"] .ai-empty-sidebar,
+html[data-theme="dark"] .ai-chat-page p,
+html[data-theme="dark"] .ai-chat-meta,
+html[data-theme="dark"] .history-error {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] button,
+html[data-theme="dark"] .button-link,
+html[data-theme="dark"] .action-button {
+  border-color: #344052;
+  background: #151c25;
+  color: var(--text);
+}
+
+html[data-theme="dark"] button:hover,
+html[data-theme="dark"] .button-link:hover,
+html[data-theme="dark"] .action-button:hover {
+  border-color: var(--accent);
+}
+
+html[data-theme="dark"] button.primary,
+html[data-theme="dark"] .primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #f8fbff;
+}
+
+html[data-theme="dark"] button.secondary,
+html[data-theme="dark"] .secondary,
+html[data-theme="dark"] .ai-applied-badge,
+html[data-theme="dark"] .ai-token-chip {
+  border-color: #365b91;
+  background: #172a46;
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] button.danger,
+html[data-theme="dark"] .danger {
+  border-color: #8b3b37;
+  background: #261719;
+  color: var(--danger);
+}
+
+html[data-theme="dark"] .notice {
+  border-color: #245b54;
+  background: #102423;
+  color: #9ce6dc;
+}
+
+html[data-theme="dark"] .notice.error,
+html[data-theme="dark"] .message-card.error {
+  border-color: #7f3234;
+  background: #251719;
+  color: var(--danger);
+}
+
+html[data-theme="dark"] .user-chip,
+html[data-theme="dark"] .badge,
+html[data-theme="dark"] .field-chip,
+html[data-theme="dark"] .summary-head span,
+html[data-theme="dark"] .business-chip {
+  border-color: #354152;
+  background: #222936;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .badge.ok,
+html[data-theme="dark"] .badge.ready,
+html[data-theme="dark"] .badge.succeeded,
+html[data-theme="dark"] .business-chip.ready {
+  border-color: #245a39;
+  background: #123521;
+  color: var(--ok);
+}
+
+html[data-theme="dark"] .badge.pending,
+html[data-theme="dark"] .badge.running,
+html[data-theme="dark"] .badge.retrying,
+html[data-theme="dark"] .badge.warning,
+html[data-theme="dark"] .business-chip.pending,
+html[data-theme="dark"] .business-chip.warning {
+  border-color: #6f5224;
+  background: #332613;
+  color: var(--warning);
+}
+
+html[data-theme="dark"] .badge.failed,
+html[data-theme="dark"] .badge.error,
+html[data-theme="dark"] .badge.skipped,
+html[data-theme="dark"] .business-chip.failed {
+  border-color: #7f3234;
+  background: #311a1c;
+  color: var(--danger);
+}
+
+html[data-theme="dark"] table,
+html[data-theme="dark"] th,
+html[data-theme="dark"] td {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] th {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .table-toolbar,
+html[data-theme="dark"] .ai-review-history,
+html[data-theme="dark"] .ai-settings-section + .ai-settings-section,
+html[data-theme="dark"] .ai-settings-actions {
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .select-all-control,
+html[data-theme="dark"] .request-log-summary summary,
+html[data-theme="dark"] .ai-settings-grid .checkbox-line {
+  border-color: #344052;
+  background: #131a23;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .memory-table th:last-child,
+html[data-theme="dark"] .memory-table td.action-cell {
+  background: var(--surface);
+  box-shadow: -10px 0 14px -14px rgba(0, 0, 0, 0.9);
+}
+
+html[data-theme="dark"] .memory-table tbody tr.memory-row:hover,
+html[data-theme="dark"] .memory-table tbody tr.memory-row:hover td.action-cell {
+  background: #1b2330;
+}
+
+html[data-theme="dark"] .memory-table tbody tr.is-ai-applied,
+html[data-theme="dark"] .memory-table tbody tr.is-ai-applied td.action-cell {
+  background: #132742;
+  box-shadow: inset 4px 0 0 #4f8cff;
+}
+
+html[data-theme="dark"] .memory-table tbody tr.is-ai-applied:hover,
+html[data-theme="dark"] .memory-table tbody tr.is-ai-applied:hover td.action-cell {
+  background: #17304f;
+}
+
+html[data-theme="dark"] .memory-table tbody tr.is-deleted,
+html[data-theme="dark"] .memory-table tbody tr.is-deleted td.action-cell {
+  background: #17191d;
+  color: #8f9aaa;
+}
+
+html[data-theme="dark"] .request-log-detail-row > td,
+html[data-theme="dark"] .attachment-strip a,
+html[data-theme="dark"] .method-chip {
+  background: #131a23;
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] .ai-chat-page,
+html[data-theme="dark"] .ai-chat-workspace,
+html[data-theme="dark"] .ai-chat-thread-area,
+html[data-theme="dark"] .ai-chat-empty-panel {
+  background: var(--bg);
+  color: var(--text);
+}
+
+html[data-theme="dark"] .ai-chat-secondary,
+html[data-theme="dark"] .ai-thread-search,
+html[data-theme="dark"] .ai-chat-pill {
+  border-color: #344052;
+  background: #141b24;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .ai-thread-link.active,
+html[data-theme="dark"] .ai-thread-link:hover,
+html[data-theme="dark"] .ai-chat-pill.active {
+  background: #1d2a3d;
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] .message-card.user,
+html[data-theme="dark"] .ai-chat-message.user .message-card {
+  border-color: #27466d;
+  background: #16263a;
+}
+
+html[data-theme="dark"] .message-card.assistant,
+html[data-theme="dark"] .ai-chat-message.assistant .message-card {
+  border-color: var(--line);
+  background: #171d25;
+}
+
+html[data-theme="dark"] .ai-chat-submit {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #f8fbff;
+}
+
+html[data-theme="dark"] .ai-chat-page .ai-thread-sidebar::-webkit-scrollbar-track {
+  background: #10151c;
+}
+
+html[data-theme="dark"] .ai-chat-page .ai-thread-sidebar::-webkit-scrollbar-thumb {
+  background: #3a4658;
+}
+
+/* Dark theme readability fixes for table-heavy admin pages. */
+html[data-theme="dark"] table,
+html[data-theme="dark"] tbody,
+html[data-theme="dark"] tr,
+html[data-theme="dark"] td,
+html[data-theme="dark"] .data-table,
+html[data-theme="dark"] .data-table td,
+html[data-theme="dark"] .memory-table td,
+html[data-theme="dark"] .request-log-table td,
+html[data-theme="dark"] .ai-review-history-table td,
+html[data-theme="dark"] .agents-table td,
+html[data-theme="dark"] .devices-table td,
+html[data-theme="dark"] .category-table td {
+  color: var(--text);
+}
+
+html[data-theme="dark"] strong,
+html[data-theme="dark"] b,
+html[data-theme="dark"] .label-view,
+html[data-theme="dark"] .truncate,
+html[data-theme="dark"] .memory-title,
+html[data-theme="dark"] .memory-title-cell strong,
+html[data-theme="dark"] .request-cell strong,
+html[data-theme="dark"] .client-cell strong,
+html[data-theme="dark"] .owner-cell strong,
+html[data-theme="dark"] .nowrap-cell strong,
+html[data-theme="dark"] .identity-main {
+  color: var(--text);
+}
+
+html[data-theme="dark"] code,
+html[data-theme="dark"] .data-table code,
+html[data-theme="dark"] .request-cell code,
+html[data-theme="dark"] .client-cell code,
+html[data-theme="dark"] .agents-table .id-cell code,
+html[data-theme="dark"] .devices-table .id-cell code {
+  color: #c8d7ea;
+}
+
+html[data-theme="dark"] th,
+html[data-theme="dark"] .summary-label,
+html[data-theme="dark"] .identity-subline,
+html[data-theme="dark"] .owner-cell code,
+html[data-theme="dark"] .time-stack b,
+html[data-theme="dark"] .deleted-time {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .panel a:not(.button-link):not(.action-button),
+html[data-theme="dark"] td a:not(.button-link):not(.action-button) {
+  color: var(--accent-strong);
 }

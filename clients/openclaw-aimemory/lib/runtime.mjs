@@ -357,6 +357,7 @@ async function extractCompactionViaBackend(config, transcript, reason, event, ct
     "/v1/memories/extract",
     {
       agent_id: config.agentId,
+      ...(config.deviceId ? { device_id: config.deviceId } : {}),
       transcript,
       reason,
       metadata: {

@@ -522,7 +522,10 @@ def test_context_returns_empty_when_category_is_missing(monkeypatch) -> None:
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid4())
     client = TestClient(app)
 
-    response = client.post("/v1/memories/context", json={"agent_id": "assistant", "category": "不存在", "query": "苹果"})
+    response = client.post(
+        "/v1/memories/context",
+        json={"agent_id": "am_testagent000000000000000", "category": "不存在", "query": "苹果"},
+    )
 
     assert response.status_code == 200
     assert response.json()["items"] == []

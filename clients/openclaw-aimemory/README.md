@@ -31,8 +31,14 @@ Make sure `~/.openclaw/aimemory.env` exists:
 ```bash
 AIMEMORY_BASE_URL=http://192.168.31.11:10011
 AIMEMORY_API_KEY=<api-key>
-AIMEMORY_AGENT_ID=5df9cbfb-d31b-46dd-972b-05d466d2257c
+AIMEMORY_DEVICE_ID=openclaw-31-9
+AIMEMORY_AGENT_ID=am_my7vyfwqm53vf7jdwlwzxfmw
 ```
+
+`AIMEMORY_DEVICE_ID` is used only for source tracking and backend device
+binding. `AIMEMORY_AGENT_ID` remains the memory namespace and uses the unified
+public `am_` format; when a valid device is registered in the admin page, the
+AIMemory server resolves the final agent from that device binding.
 
 Install into OpenClaw:
 
@@ -77,7 +83,7 @@ The installer writes:
         "config": {
           "enabled": true,
           "baseUrl": "http://192.168.31.11:10011",
-          "agentId": "5df9cbfb-d31b-46dd-972b-05d466d2257c",
+          "agentId": "am_my7vyfwqm53vf7jdwlwzxfmw",
           "envFile": "~/.openclaw/aimemory.env",
           "allowedChatTypes": ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
           "topK": 8,

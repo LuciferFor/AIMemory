@@ -15,6 +15,7 @@ from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.models.user import User
 from aimemory.repositories.memory_categories import UNCATEGORIZED_CATEGORY, get_active_category, list_category_summaries
+from aimemory.repositories.memory_agents import ResolvedMemoryIdentity, resolve_memory_identity
 from aimemory.repositories.memories import (
     SearchAttachment,
     filter_high_frequency_terms,
@@ -157,6 +158,34 @@ RECENT_EXTRACT_REQUESTS: dict[str, float] = {}
 EXTRACT_DEDUPE_TTL_SECONDS = 120
 
 
+def resolved_payload(
+    request: Request,
+    db: Session,
+    current_user: User,
+    payload: MemoryUpsertRequest | MemorySearchRequest | MemoryContextRequest | MemoryExtractRequest | MemoryDeleteRequest,
+):
+    try:
+        identity = resolve_memory_identity(
+            db,
+            current_user.id,
+            agent_id=payload.agent_id,
+            device_id=getattr(payload, "device_id", None),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    mark_request_identity(request, identity)
+    return payload.model_copy(update={"agent_id": identity.agent_id, "device_id": identity.device_id}), identity
+
+
+def mark_request_identity(request: Request, identity: ResolvedMemoryIdentity) -> None:
+    request.state.request_log_agent_id = identity.agent_id
+    request.state.request_log_agent_name = identity.agent_name
+    request.state.request_log_device_id = identity.device_id
+    request.state.request_log_device_name = identity.device_name
+
+
 @router.post("", response_model=MemoryUpsertResponse)
 def write_memory(
     request: Request,
@@ -166,6 +195,7 @@ def write_memory(
 ) -> MemoryUpsertResponse:
     start = time.perf_counter()
     retried_after_integrity_error = False
+    payload, identity = resolved_payload(request, db, current_user, payload)
     category_name, category_meta = resolve_category_for_write(db, current_user, payload)
     payload_for_write = payload.model_copy(update={"category": category_name})
     try:
@@ -189,6 +219,7 @@ def write_memory(
         memory.id,
         action,
         category_meta,
+        identity,
     )
     logger.info(
         "memory.write",
@@ -196,6 +227,9 @@ def write_memory(
             "event": "memory.write",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "external_id": payload.external_id,
             "category": category_name,
             "category_source": category_meta.get("category_source"),
@@ -221,10 +255,12 @@ def write_memory(
 
 @router.post("/search", response_model=MemorySearchResponse)
 def search_memory(
+    request: Request,
     payload: MemorySearchRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemorySearchResponse:
+    payload, identity = resolved_payload(request, db, current_user, payload)
     results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = _search_results(
         db,
         current_user,
@@ -236,6 +272,9 @@ def search_memory(
             "event": "memory.search",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "category": payload.category,
             "category_found": category_found,
             "category_source": query_analysis.get("category_source"),
@@ -281,6 +320,7 @@ def build_memory_context(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryContextResponse:
+    payload, identity = resolved_payload(request, db, current_user, payload)
     results, used_vector, search_duration_ms, query_terms, ignored_terms, category_found, query_analysis = _search_results(
         db,
         current_user,
@@ -288,8 +328,8 @@ def build_memory_context(
     )
     context_text = build_context_text(results, payload.max_chars)
     request.state.request_log_response_summary = build_context_response_summary(
-        payload.agent_id,
-        payload.category,
+        identity,
+        payload.category or "",
         category_found,
         payload.query,
         payload.top_k,
@@ -306,6 +346,9 @@ def build_memory_context(
             "event": "memory.context",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "category": payload.category,
             "category_found": category_found,
             "category_source": query_analysis.get("category_source"),
@@ -381,6 +424,7 @@ def extract_memory_from_transcript(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryExtractResponse:
+    payload, identity = resolved_payload(request, db, current_user, payload)
     dedupe_key = extract_request_dedupe_key(current_user.id, payload)
     now = time.time()
     prune_recent_extract_requests(now)
@@ -389,6 +433,9 @@ def extract_memory_from_transcript(
         request.state.request_log_response_summary = {
             "type": "extract",
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "reason": payload.reason,
             "transcript_chars": len(payload.transcript),
             "deduplicated": True,
@@ -471,6 +518,9 @@ def extract_memory_from_transcript(
     request.state.request_log_response_summary = {
         "type": "extract",
         "agent_id": payload.agent_id,
+        "agent_name": identity.agent_name,
+        "device_id": identity.device_id,
+        "device_name": identity.device_name,
         "reason": payload.reason,
         "transcript_chars": len(payload.transcript),
         "extracted": response.extracted,
@@ -489,6 +539,9 @@ def extract_memory_from_transcript(
             "event": "memory.extract",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "reason": payload.reason,
             "transcript_chars": len(payload.transcript),
             "extracted": response.extracted,
@@ -527,11 +580,13 @@ def download_attachment(
 
 @router.delete("", response_model=MemoryDeleteResponse)
 def delete_memory(
+    request: Request,
     payload: MemoryDeleteRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryDeleteResponse:
     start = time.perf_counter()
+    payload, identity = resolved_payload(request, db, current_user, payload)
     deleted = soft_delete_memory(db, current_user.id, payload.agent_id, payload.external_id)
     db.commit()
     logger.info(
@@ -540,6 +595,9 @@ def delete_memory(
             "event": "memory.delete",
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
+            "agent_name": identity.agent_name,
+            "device_id": identity.device_id,
+            "device_name": identity.device_name,
             "external_id": payload.external_id,
             "deleted": deleted,
             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
@@ -1008,7 +1066,7 @@ def build_context_text(results: list[Any], max_chars: int) -> str:
 
 
 def build_context_response_summary(
-    agent_id: str,
+    identity: ResolvedMemoryIdentity,
     category: str,
     category_found: bool,
     query: str,
@@ -1024,7 +1082,10 @@ def build_context_response_summary(
     logged_ignored_terms = ignored_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
     return {
         "type": "context",
-        "agent_id": agent_id,
+        "agent_id": identity.agent_id,
+        "agent_name": identity.agent_name,
+        "device_id": identity.device_id,
+        "device_name": identity.device_name,
         "category": category,
         "category_found": category_found,
         "category_not_found": not category_found,
@@ -1082,10 +1143,14 @@ def build_write_response_summary(
     memory_id: UUID,
     action: str,
     category_info: dict[str, Any],
+    identity: ResolvedMemoryIdentity,
 ) -> dict[str, Any]:
     return {
         "type": "write",
         "agent_id": payload.agent_id,
+        "agent_name": identity.agent_name,
+        "device_id": identity.device_id,
+        "device_name": identity.device_name,
         "external_id": payload.external_id,
         "memory_id": str(memory_id),
         "action": action,

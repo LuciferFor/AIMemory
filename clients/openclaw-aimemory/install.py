@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 
-DEFAULT_AGENT_ID = "5df9cbfb-d31b-46dd-972b-05d466d2257c"
+DEFAULT_AGENT_ID = "am_my7vyfwqm53vf7jdwlwzxfmw"
 DEFAULT_BASE_URL = "http://192.168.31.11:10011"
 
 
@@ -63,6 +63,7 @@ def update_openclaw_config(config_path: Path, args: argparse.Namespace) -> Path 
             "enabled": True,
             "baseUrl": args.base_url,
             "agentId": args.agent_id,
+            "deviceId": args.device_id,
             "envFile": str(args.env_file),
             "allowedChatTypes": ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
             "topK": args.top_k,
@@ -107,6 +108,7 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--agent-id", default=DEFAULT_AGENT_ID)
+    parser.add_argument("--device-id", default="")
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--max-chars", type=int, default=3000)
     parser.add_argument("--timeout-ms", type=int, default=3000)
@@ -128,7 +130,7 @@ def main() -> int:
     backup = update_openclaw_config(args.config, args)
     if not args.env_file.exists():
         print(f"warning: env file not found: {args.env_file}", file=sys.stderr)
-        print("create it with AIMEMORY_BASE_URL, AIMEMORY_API_KEY, AIMEMORY_AGENT_ID", file=sys.stderr)
+        print("create it with AIMEMORY_BASE_URL, AIMEMORY_API_KEY, AIMEMORY_DEVICE_ID, AIMEMORY_AGENT_ID", file=sys.stderr)
 
     if not args.skip_openclaw_install:
         run_openclaw_install(args.openclaw_bin, args.install_dir)

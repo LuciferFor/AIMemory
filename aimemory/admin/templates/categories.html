@@ -38,8 +38,16 @@
   </form>
 </section>
 
-<section class="panel">
-  <table>
+<section class="panel categories-table-panel">
+  <table class="data-table category-table">
+    <colgroup>
+      <col class="col-user">
+      <col class="col-category-name">
+      <col class="col-description">
+      <col class="col-count">
+      <col class="col-edit">
+      <col class="col-merge">
+    </colgroup>
     <thead>
       <tr>
         <th>用户</th>
@@ -54,11 +62,11 @@
       {% for row in rows %}
       {% set category = row.category %}
       <tr>
-        <td><strong>{{ row.user_name }}</strong></td>
-        <td><strong>{{ category.name }}</strong></td>
-        <td>{{ category.description or "-" }}</td>
+        <td class="nowrap-cell"><strong>{{ row.user_name }}</strong></td>
+        <td class="nowrap-cell"><strong title="{{ category.name }}">{{ category.name }}</strong></td>
+        <td class="ellipsis-cell" title="{{ category.description or '-' }}">{{ category.description or "-" }}</td>
         <td><span class="badge">{{ row.memory_count }}</span></td>
-        <td>
+        <td class="edit-cell">
           <form method="post" action="/admin/categories/{{ category.id }}/update" class="category-edit-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input name="name" value="{{ category.name }}" maxlength="128" required>
@@ -66,7 +74,7 @@
             <button type="submit">保存</button>
           </form>
         </td>
-        <td>
+        <td class="merge-cell">
           <div class="category-actions">
             <form method="post" action="/admin/categories/{{ category.id }}/merge" class="category-merge-form" data-confirm="确认合并这个分类？源分类会被隐藏。">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

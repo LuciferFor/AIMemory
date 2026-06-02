@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title or "AIMemory 管理后台" }}</title>
+  <script>
+    (function () {
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("aimemory-admin-theme") || "dark";
+      } catch (error) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/admin/static/admin.css?v={{ admin_asset_version }}">
 </head>
 <body>
@@ -17,6 +26,7 @@
         <a href="/admin" class="{{ 'active' if request.url.path == '/admin' else '' }}">仪表盘</a>
         <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') else '' }}">用户</a>
         <a href="/admin/api-keys" class="{{ 'active' if request.url.path.startswith('/admin/api-keys') else '' }}">接口密钥</a>
+        <a href="/admin/agents" class="{{ 'active' if request.url.path.startswith('/admin/agents') or request.url.path.startswith('/admin/devices') else '' }}">智能体/设备</a>
         <a href="/admin/categories" class="{{ 'active' if request.url.path.startswith('/admin/categories') else '' }}">分类</a>
         <a href="/admin/memories" class="{{ 'active' if request.url.path.startswith('/admin/memories') else '' }}">记忆</a>
         <a href="/admin/ai-settings" class="{{ 'active' if request.url.path.startswith('/admin/ai-settings') or request.url.path.startswith('/admin/ai-reviews') else '' }}">AI 整理</a>
@@ -25,6 +35,9 @@
         <a href="/admin/request-logs" class="{{ 'active' if request.url.path.startswith('/admin/request-logs') else '' }}">请求日志</a>
         <a href="/admin/health" class="{{ 'active' if request.url.path.startswith('/admin/health') else '' }}">健康检查</a>
       </nav>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="true">
+        <span data-theme-toggle-text>深色模式</span>
+      </button>
       <form method="post" action="/admin/logout" class="logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">退出登录</button>
@@ -44,6 +57,30 @@
     </main>
   </div>
   <script>
+    function setAdminTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      try {
+        localStorage.setItem("aimemory-admin-theme", theme);
+      } catch (error) {
+        // Ignore localStorage failures; the current page can still switch theme.
+      }
+      document.querySelectorAll("[data-theme-toggle]").forEach(function (button) {
+        const isDark = theme === "dark";
+        button.setAttribute("aria-pressed", String(isDark));
+        const text = button.querySelector("[data-theme-toggle-text]");
+        if (text) {
+          text.textContent = isDark ? "深色模式" : "浅色模式";
+        }
+      });
+    }
+    setAdminTheme(document.documentElement.dataset.theme || "dark");
+    document.addEventListener("click", function (event) {
+      const button = event.target.closest("[data-theme-toggle]");
+      if (!button) {
+        return;
+      }
+      setAdminTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    });
     document.addEventListener("submit", function (event) {
       const form = event.target;
       if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {

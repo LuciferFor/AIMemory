@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 
 AgentId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+DeviceId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 ExternalId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=256)]
 CategoryName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=512)]
@@ -36,7 +37,8 @@ class MemoryAttachmentMeta(BaseModel):
 
 
 class MemoryUpsertRequest(BaseModel):
-    agent_id: AgentId
+    agent_id: AgentId | None = None
+    device_id: DeviceId | None = None
     external_id: ExternalId
     category: CategoryName | None = None
     title: Title
@@ -54,7 +56,8 @@ class MemoryUpsertResponse(BaseModel):
 
 
 class MemorySearchRequest(BaseModel):
-    agent_id: AgentId
+    agent_id: AgentId | None = None
+    device_id: DeviceId | None = None
     category: CategoryName | None = None
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=10, ge=1, le=50)
@@ -103,7 +106,8 @@ class MemorySearchResponse(BaseModel):
 
 
 class MemoryContextRequest(BaseModel):
-    agent_id: AgentId
+    agent_id: AgentId | None = None
+    device_id: DeviceId | None = None
     category: CategoryName | None = None
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=8, ge=1, le=50)
@@ -155,7 +159,8 @@ class MemoryWritePolicyResponse(BaseModel):
 
 
 class MemoryExtractRequest(BaseModel):
-    agent_id: AgentId
+    agent_id: AgentId | None = None
+    device_id: DeviceId | None = None
     transcript: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200000)]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)] = "conversation_compaction"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -175,7 +180,8 @@ class MemoryExtractResponse(BaseModel):
 
 
 class MemoryDeleteRequest(BaseModel):
-    agent_id: AgentId
+    agent_id: AgentId | None = None
+    device_id: DeviceId | None = None
     external_id: ExternalId
 
 

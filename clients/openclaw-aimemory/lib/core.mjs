@@ -6,7 +6,8 @@ import path from "node:path";
 export const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   baseUrl: "http://192.168.31.11:10011",
-  agentId: "5df9cbfb-d31b-46dd-972b-05d466d2257c",
+  agentId: "am_my7vyfwqm53vf7jdwlwzxfmw",
+  deviceId: "",
   envFile: "~/.openclaw/aimemory.env",
   allowedChatTypes: ["direct", "private", "dm", "webchat", "dashboard", "local", "embedded"],
   allowedAgents: [],
@@ -148,6 +149,7 @@ export function resolveConfig(pluginConfig = {}, options = {}) {
     ),
     apiKey: processEnv.AIMEMORY_API_KEY || envValues.AIMEMORY_API_KEY || "",
     agentId: processEnv.AIMEMORY_AGENT_ID || envValues.AIMEMORY_AGENT_ID || merged.agentId,
+    deviceId: processEnv.AIMEMORY_DEVICE_ID || envValues.AIMEMORY_DEVICE_ID || merged.deviceId || "",
     allowedChatTypes: normalizeStringArray(
       merged.allowedChatTypes,
       DEFAULT_CONFIG.allowedChatTypes,
@@ -718,6 +720,7 @@ export async function fetchMemoryContext(config, query, options = {}) {
   const category = options.category || config.category || "";
   const body = {
     agent_id: config.agentId,
+    ...(config.deviceId ? { device_id: config.deviceId } : {}),
     query,
     top_k: config.topK,
     max_chars: config.maxChars,
@@ -745,6 +748,7 @@ export async function fetchWritePolicy(config, options = {}) {
 export async function writeMemory(config, memory, options = {}) {
   const body = {
     agent_id: config.agentId,
+    ...(config.deviceId ? { device_id: config.deviceId } : {}),
     external_id: memory.external_id,
     title: memory.title,
     content: memory.content,

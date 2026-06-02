@@ -95,6 +95,12 @@
           {% elif log.user_id %}
           <strong title="{{ log.user_id }}">{{ row.user_name or short_middle(log.user_id, 8, 6) }}</strong>
           {% if log.api_key_prefix %}<span class="muted">{{ log.api_key_prefix }}</span>{% endif %}
+          {% if log.agent_id %}
+          <div class="identity-subline" title="{{ log.agent_id }}">智能体 {{ log.agent_name or short_middle(log.agent_id, 8, 6) }}</div>
+          {% endif %}
+          {% if log.device_id %}
+          <div class="identity-subline" title="{{ log.device_id }}">设备 {{ log.device_name or short_middle(log.device_id, 10, 6) }}</div>
+          {% endif %}
           {% else %}
           <span class="muted">未识别</span>
           {% endif %}
@@ -152,7 +158,8 @@
               <div>
                 <span class="summary-label">保存参数</span>
                 <span class="term-list">
-                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
                   {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
                   {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
                   {% if summary.get("skipped") %}<code class="term-chip ignored">跳过 {{ summary.get("skipped") }}</code>{% endif %}
@@ -181,7 +188,8 @@
               <div>
                 <span class="summary-label">保存参数</span>
                 <span class="term-list">
-                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
                   {% if summary.get("external_id") %}<code class="term-chip">外部ID {{ short_middle(summary.get("external_id"), 14, 8) }}</code>{% endif %}
                   {% if summary.get("action") %}<code class="term-chip hit">{{ summary.get("action") }}</code>{% endif %}
                   {% if summary.get("attachment_count") is not none %}<code class="term-chip">附件 {{ summary.get("attachment_count") }}</code>{% endif %}
@@ -267,7 +275,8 @@
               <div>
                 <span class="summary-label">请求参数</span>
                 <span class="term-list">
-                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
+                  {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
                   {% if summary.get("category") %}<code class="term-chip">分类 {{ summary.get("category") }}</code>{% endif %}
                   {% if summary.get("category_not_found") %}<code class="term-chip ignored">分类不存在</code>{% endif %}
                   {% if summary.get("top_k") %}<code class="term-chip">top_k {{ summary.get("top_k") }}</code>{% endif %}

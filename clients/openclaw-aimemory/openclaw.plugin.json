@@ -20,7 +20,12 @@
       },
       "agentId": {
         "type": "string",
-        "default": "5df9cbfb-d31b-46dd-972b-05d466d2257c"
+        "default": "am_my7vyfwqm53vf7jdwlwzxfmw"
+      },
+      "deviceId": {
+        "type": "string",
+        "description": "Optional AIMemory device_id for source tracking and backend-bound agent resolution.",
+        "default": ""
       },
       "envFile": {
         "type": "string",
@@ -118,6 +123,9 @@
     },
     "agentId": {
       "label": "AIMemory agent_id"
+    },
+    "deviceId": {
+      "label": "AIMemory device_id"
     },
     "envFile": {
       "label": "AIMemory env file"

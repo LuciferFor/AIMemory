@@ -3,55 +3,73 @@
 {% set heading = "AI 整理" %}
 {% set subheading = "OpenAI-compatible 模型配置" %}
 {% block content %}
-<section class="panel">
-  <form method="post" action="/admin/ai-settings" class="form-grid ai-settings-form">
+<section class="panel ai-settings-panel">
+  <form method="post" action="/admin/ai-settings" class="ai-settings-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Base URL
-      <input name="base_url" value="{{ config.base_url }}" required>
-    </label>
-    <label>模型
-      <input name="model" value="{{ config.model }}" required>
-    </label>
-    <label>API Key
-      <input name="api_key" type="password" autocomplete="off" placeholder="{{ '已保存：' ~ config.api_key_hint if config.has_api_key else '未配置' }}">
-    </label>
-    <label>超时毫秒
-      <input name="timeout_ms" type="number" min="500" max="600000" value="{{ config.timeout_ms }}">
-    </label>
-    <label>最大输出 Token
-      <input name="max_output_tokens" type="number" min="1" max="200000" value="{{ config.max_output_tokens }}">
-    </label>
-    <label>Temperature
-      <input name="temperature" type="number" min="0" max="2" step="0.1" value="{{ config.temperature }}">
-    </label>
-    <label class="wide">扩展请求体 JSON
-      <textarea name="extra_body_json" rows="6">{{ config.extra_body_json }}</textarea>
-    </label>
-    <label class="wide">整理前置注入提示
-      <textarea name="review_prompt_injection" class="prompt-textarea" rows="7">{{ config.review_prompt_injection }}</textarea>
-    </label>
-    <label class="checkbox-line">
-      <input type="checkbox" name="enabled" {{ "checked" if config.enabled else "" }}>
-      启用 AI 整理
-    </label>
-    <label class="checkbox-line">
-      <input type="checkbox" name="query_analysis_enabled" {{ "checked" if config.query_analysis_enabled else "" }}>
-      启用 AI 检索提词
-    </label>
-    <label>提词最大输出 Token
-      <input name="query_analysis_max_output_tokens" type="number" min="1" max="4096" value="{{ config.query_analysis_max_output_tokens }}">
-    </label>
-    <label>提词超时毫秒
-      <input name="query_analysis_timeout_ms" type="number" min="500" max="600000" value="{{ config.query_analysis_timeout_ms }}">
-    </label>
+    <section class="ai-settings-section">
+      <h2>基础配置</h2>
+      <div class="ai-settings-grid three">
+        <label>Base URL
+          <input name="base_url" value="{{ config.base_url }}" required>
+        </label>
+        <label>模型
+          <input name="model" value="{{ config.model }}" required>
+        </label>
+        <label>API Key
+          <input name="api_key" type="password" autocomplete="off" placeholder="{{ '已保存：' ~ config.api_key_hint if config.has_api_key else '未配置' }}">
+        </label>
+        <label>超时毫秒
+          <input name="timeout_ms" type="number" min="500" max="600000" value="{{ config.timeout_ms }}">
+        </label>
+        <label>最大输出 Token
+          <input name="max_output_tokens" type="number" min="1" max="200000" value="{{ config.max_output_tokens }}">
+        </label>
+        <label>Temperature
+          <input name="temperature" type="number" min="0" max="2" step="0.1" value="{{ config.temperature }}">
+        </label>
+      </div>
+    </section>
+
+    <section class="ai-settings-section">
+      <h2>整理配置</h2>
+      <div class="ai-settings-grid one">
+        <label>扩展请求体 JSON
+          <textarea name="extra_body_json" rows="6">{{ config.extra_body_json }}</textarea>
+        </label>
+        <label>整理前置注入提示
+          <textarea name="review_prompt_injection" class="prompt-textarea" rows="7">{{ config.review_prompt_injection }}</textarea>
+        </label>
+      </div>
+    </section>
+
+    <section class="ai-settings-section">
+      <h2>功能开关</h2>
+      <div class="ai-settings-grid four">
+        <label class="checkbox-line">
+          <input type="checkbox" name="enabled" {{ "checked" if config.enabled else "" }}>
+          启用 AI 整理
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="query_analysis_enabled" {{ "checked" if config.query_analysis_enabled else "" }}>
+          启用 AI 检索提词
+        </label>
+        <label>提词最大输出 Token
+          <input name="query_analysis_max_output_tokens" type="number" min="1" max="4096" value="{{ config.query_analysis_max_output_tokens }}">
+        </label>
+        <label>提词超时毫秒
+          <input name="query_analysis_timeout_ms" type="number" min="500" max="600000" value="{{ config.query_analysis_timeout_ms }}">
+        </label>
+      </div>
+    </section>
+
     {% if not encryption_ready %}
-    <div class="notice error wide">AI_CONFIG_ENCRYPTION_SECRET 未配置，不能保存新的 API Key。</div>
+    <div class="notice error">AI_CONFIG_ENCRYPTION_SECRET 未配置，不能保存新的 API Key。</div>
     {% endif %}
-    <div class="form-actions wide">
+    <div class="ai-settings-actions">
       <button type="submit" class="primary">保存配置</button>
     </div>
   </form>
-  <form method="post" action="/admin/ai-settings/test" class="inline-form" data-confirm="确认发起一次最小 AI 连接测试？">
+  <form method="post" action="/admin/ai-settings/test" class="ai-settings-test-form" data-confirm="确认发起一次最小 AI 连接测试？">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="secondary">测试连接</button>
     <span class="muted">测试不会发送记忆内容。</span>

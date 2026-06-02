@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% set title = "智能体/设备 - AIMemory 管理后台" %}
+{% set heading = "智能体 / 设备" %}
+{% set subheading = "记忆空间与请求来源管理" %}
+{% block content %}
+<section class="panel">
+  <form method="get" action="/admin/agents" class="filter-bar">
+    <label>用户
+      <select name="user_id">
+        <option value="">全部用户</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="secondary">筛选</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>创建智能体</h2>
+  <form method="post" action="/admin/agents" class="filter-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>用户
+      <select name="user_id" required>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>显示名
+      <input name="display_name" maxlength="128" placeholder="绯夜" required>
+    </label>
+    <label>说明
+      <input name="description" placeholder="这个记忆空间的用途">
+    </label>
+    <button type="submit" class="primary">创建智能体</button>
+  </form>
+  <p class="muted">智能体 ID 会自动生成统一格式，例如 <code>am_xxxxxxxxxxxxxxxxxxxxxxxx</code>。</p>
+</section>
+
+<section class="panel">
+  <h2>创建设备</h2>
+  <form method="post" action="/admin/devices" class="filter-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>用户
+      <select name="user_id" required>
+        {% for user in users %}
+        <option value="{{ user.id }}" {{ "selected" if filters.user_id == user.id|string else "" }}>{{ user.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>设备 ID
+      <input name="device_id" maxlength="128" placeholder="openclaw-31-11" required>
+    </label>
+    <label>设备显示名
+      <input name="display_name" maxlength="128" placeholder="31.11 OpenClaw" required>
+    </label>
+    <label>绑定智能体
+      <select name="agent_id" required>
+        <option value="">选择智能体</option>
+        {% for row in agent_rows %}
+        {% set agent = row.agent %}
+        <option value="{{ agent.agent_id }}">{{ agent.display_name }} / {{ agent.agent_id }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>说明
+      <input name="description" placeholder="这台设备或这套 OpenClaw 的来源说明">
+    </label>
+    <button type="submit" class="primary">创建设备</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>智能体</h2>
+  <table class="data-table agents-table">
+    <colgroup>
+      <col class="col-user">
+      <col class="col-edit">
+      <col class="col-agent-id">
+      <col class="col-description">
+      <col class="col-count">
+      <col class="col-status">
+      <col class="col-actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>用户</th>
+        <th>显示名</th>
+        <th>智能体 ID</th>
+        <th>说明</th>
+        <th>有效记忆</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in agent_rows %}
+      {% set agent = row.agent %}
+      <tr>
+        <td>{{ row.user_name }}</td>
+        <td class="edit-cell">
+          <form method="post" action="/admin/agents/{{ agent.id }}/update" class="inline-edit-form agent-inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input class="edit-name" name="display_name" value="{{ agent.display_name }}" maxlength="128" required aria-label="智能体显示名">
+            <input class="edit-description" name="description" value="{{ agent.description or '' }}" placeholder="说明" aria-label="智能体说明">
+            <button type="submit" class="action-button detail">保存</button>
+          </form>
+        </td>
+        <td class="id-cell">
+          <code>{{ agent.agent_id }}</code>
+          {% if agent.legacy_agent_id %}
+          <div class="muted">旧 ID <code>{{ agent.legacy_agent_id }}</code></div>
+          {% endif %}
+        </td>
+        <td class="muted">{{ agent.description or "无" }}</td>
+        <td>{{ row.memory_count }}</td>
+        <td><span class="badge {{ 'ready' if agent.is_active else 'failed' }}">{{ "启用" if agent.is_active else "停用" }}</span></td>
+        <td>
+          <form method="post" action="/admin/agents/{{ agent.id }}/toggle" data-confirm="确认切换这个智能体状态？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="action-button {{ 'danger' if agent.is_active else 'detail' }}">{{ "停用" if agent.is_active else "启用" }}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">暂无智能体。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>设备</h2>
+  <table class="data-table devices-table">
+    <colgroup>
+      <col class="col-user">
+      <col class="col-device">
+      <col class="col-bound-agent">
+      <col class="col-env">
+      <col class="col-status">
+      <col class="col-actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>用户</th>
+        <th>设备</th>
+        <th>绑定智能体</th>
+        <th>配置片段</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in device_rows %}
+      {% set device = row.device %}
+      <tr>
+        <td>{{ row.user_name }}</td>
+        <td class="edit-cell">
+          <form method="post" action="/admin/devices/{{ device.id }}/update" class="inline-edit-form device-inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input class="edit-name" name="display_name" value="{{ device.display_name }}" maxlength="128" required aria-label="设备显示名">
+            <input class="edit-description" name="description" value="{{ device.description or '' }}" placeholder="说明" aria-label="设备说明">
+            <select class="edit-agent" name="agent_id" required aria-label="绑定智能体">
+              {% for agent_row in agent_rows %}
+              {% set option_agent = agent_row.agent %}
+              <option value="{{ option_agent.agent_id }}" {{ "selected" if option_agent.agent_id == device.agent_id else "" }}>{{ option_agent.display_name }} / {{ option_agent.agent_id }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="action-button detail">保存</button>
+          </form>
+          <code>{{ device.device_id }}</code>
+        </td>
+        <td class="id-cell">
+          <strong>{{ row.agent_name }}</strong>
+          <code>{{ device.agent_id }}</code>
+        </td>
+        <td>
+          <pre class="env-snippet">AIMEMORY_DEVICE_ID={{ device.device_id }}
+AIMEMORY_AGENT_ID={{ device.agent_id }}</pre>
+        </td>
+        <td><span class="badge {{ 'ready' if device.is_active else 'failed' }}">{{ "启用" if device.is_active else "停用" }}</span></td>
+        <td>
+          <form method="post" action="/admin/devices/{{ device.id }}/toggle" data-confirm="确认切换这个设备状态？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="action-button {{ 'danger' if device.is_active else 'detail' }}">{{ "停用" if device.is_active else "启用" }}</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">暂无设备。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

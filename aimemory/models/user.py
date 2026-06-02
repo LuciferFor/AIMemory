@@ -25,3 +25,5 @@ class User(Base):
     memories = relationship("Memory", back_populates="user")
     memory_categories = relationship("MemoryCategory", back_populates="user")
     search_stopwords = relationship("SearchStopword", back_populates="user")
+    memory_agents = relationship("MemoryAgent", back_populates="user")
+    memory_devices = relationship("MemoryDevice", back_populates="user")

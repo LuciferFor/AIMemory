@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.templating import Jinja2Templates
 from redis import Redis
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -32,8 +32,10 @@ from aimemory.models.ai_memory_review import AiMemoryReviewRun, AiMemoryReviewSu
 from aimemory.models.api_key import ApiKey
 from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.models.memory import Memory
+from aimemory.models.memory_agent import MemoryAgent
 from aimemory.models.memory_attachment import MemoryAttachment
 from aimemory.models.memory_category import MemoryCategory
+from aimemory.models.memory_device import MemoryDevice
 from aimemory.models.request_log import RequestLog
 from aimemory.models.search_stopword import SearchStopword
 from aimemory.models.user import User
@@ -42,6 +44,14 @@ from aimemory.repositories.memory_categories import (
     display_category_name,
     get_or_create_category,
     normalize_category_name,
+)
+from aimemory.repositories.memory_agents import (
+    agent_memory_counts,
+    create_agent_with_generated_id,
+    get_active_agent,
+    get_active_device,
+    is_unified_agent_id,
+    normalize_identifier,
 )
 from aimemory.repositories.search_stopwords import (
     add_default_search_stopwords,
@@ -438,6 +448,226 @@ async def toggle_user(user_id: uuid.UUID, request: Request, db: Session = Depend
     db.add(user)
     db.commit()
     return redirect_to("/admin/users", notice="用户状态已更新。")
+
+
+@router.get("/agents")
+def agents_devices_page(
+    request: Request,
+    user_id: str = "",
+    db: Session = Depends(get_db),
+) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    try:
+        selected_user_id = parse_optional_uuid(user_id)
+    except ValueError:
+        return redirect_to("/admin/agents", error="用户筛选参数无效。")
+
+    users = db.scalars(select(User).order_by(User.name)).all()
+    agent_query = select(MemoryAgent, User.name.label("user_name")).join(User, User.id == MemoryAgent.user_id).where(
+        MemoryAgent.deleted_at.is_(None)
+    )
+    device_query = (
+        select(MemoryDevice, User.name.label("user_name"))
+        .join(User, User.id == MemoryDevice.user_id)
+        .where(MemoryDevice.deleted_at.is_(None))
+    )
+    if selected_user_id:
+        agent_query = agent_query.where(MemoryAgent.user_id == selected_user_id)
+        device_query = device_query.where(MemoryDevice.user_id == selected_user_id)
+    agent_query = agent_query.order_by(User.name, MemoryAgent.display_name, MemoryAgent.agent_id)
+    device_query = device_query.order_by(User.name, MemoryDevice.display_name, MemoryDevice.device_id)
+
+    counts = agent_memory_counts(db)
+    agent_rows = [
+        {
+            "agent": agent,
+            "user_name": user_name,
+            "memory_count": counts.get((agent.user_id, agent.agent_id), 0),
+        }
+        for agent, user_name in db.execute(agent_query).all()
+    ]
+    agent_label_map = {
+        (agent.user_id, agent.agent_id): agent.display_name
+        for agent, _user_name in db.execute(
+            select(MemoryAgent, User.name.label("user_name"))
+            .join(User, User.id == MemoryAgent.user_id)
+            .where(MemoryAgent.deleted_at.is_(None))
+        ).all()
+    }
+    device_rows = [
+        {
+            "device": device,
+            "user_name": user_name,
+            "agent_name": agent_label_map.get((device.user_id, device.agent_id), device.agent_id),
+        }
+        for device, user_name in db.execute(device_query).all()
+    ]
+    return templates.TemplateResponse(
+        request,
+        "agents.html",
+        base_context(
+            request,
+            session,
+            users=users,
+            agent_rows=agent_rows,
+            device_rows=device_rows,
+            filters={"user_id": str(selected_user_id) if selected_user_id else ""},
+        ),
+    )
+
+
+@router.post("/agents")
+async def create_agent(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    try:
+        user_id = uuid.UUID(str(form.get("user_id", "")))
+    except ValueError:
+        return redirect_to("/admin/agents", error="请选择用户。")
+    user = db.get(User, user_id)
+    if user is None:
+        return redirect_to("/admin/agents", error="用户不存在。")
+    display_name = normalize_identifier(form.get("display_name"))
+    description = str(form.get("description") or "").strip() or None
+    if not display_name:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="显示名不能为空。")
+    agent = create_agent_with_generated_id(db, user_id, display_name=display_name, description=description)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(user_id), notice=f"智能体已创建：{agent.agent_id}")
+
+
+@router.post("/agents/{agent_pk}/update")
+async def update_agent(agent_pk: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    agent = db.get(MemoryAgent, agent_pk)
+    if agent is None or agent.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="智能体不存在。")
+    display_name = normalize_identifier(form.get("display_name"))
+    description = str(form.get("description") or "").strip() or None
+    if not display_name:
+        return redirect_to("/admin/agents", user_id=str(agent.user_id), error="显示名不能为空。")
+    agent.display_name = display_name
+    agent.description = description
+    agent.updated_at = utcnow()
+    db.add(agent)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(agent.user_id), notice="智能体已更新。")
+
+
+@router.post("/agents/{agent_pk}/toggle")
+async def toggle_agent(agent_pk: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    agent = db.get(MemoryAgent, agent_pk)
+    if agent is None or agent.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="智能体不存在。")
+    agent.is_active = not agent.is_active
+    agent.updated_at = utcnow()
+    db.add(agent)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(agent.user_id), notice="智能体状态已更新。")
+
+
+@router.post("/devices")
+async def create_device(request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    try:
+        user_id = uuid.UUID(str(form.get("user_id", "")))
+    except ValueError:
+        return redirect_to("/admin/agents", error="请选择用户。")
+    user = db.get(User, user_id)
+    if user is None:
+        return redirect_to("/admin/agents", error="用户不存在。")
+    device_id = normalize_identifier(form.get("device_id"))
+    display_name = normalize_identifier(form.get("display_name"))
+    agent_id = normalize_identifier(form.get("agent_id"))
+    description = str(form.get("description") or "").strip() or None
+    if not device_id:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="设备 ID 不能为空。")
+    if not display_name:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="设备显示名不能为空。")
+    if not agent_id:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="绑定智能体 ID 不能为空。")
+    if not is_unified_agent_id(agent_id):
+        return redirect_to("/admin/agents", user_id=str(user_id), error="绑定智能体 ID 必须使用 am_ 统一格式。")
+    if get_active_device(db, user_id, device_id) is not None:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="设备 ID 已存在。")
+    if get_active_agent(db, user_id, agent_id) is None:
+        return redirect_to("/admin/agents", user_id=str(user_id), error="绑定智能体不存在，请先创建智能体。")
+    device = MemoryDevice(
+        user_id=user_id,
+        device_id=device_id,
+        display_name=display_name,
+        agent_id=agent_id,
+        description=description,
+        is_active=True,
+    )
+    db.add(device)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(user_id), notice="设备已创建。")
+
+
+@router.post("/devices/{device_pk}/update")
+async def update_device(device_pk: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    device = db.get(MemoryDevice, device_pk)
+    if device is None or device.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="设备不存在。")
+    display_name = normalize_identifier(form.get("display_name"))
+    agent_id = normalize_identifier(form.get("agent_id"))
+    description = str(form.get("description") or "").strip() or None
+    if not display_name:
+        return redirect_to("/admin/agents", user_id=str(device.user_id), error="设备显示名不能为空。")
+    if not agent_id:
+        return redirect_to("/admin/agents", user_id=str(device.user_id), error="绑定智能体 ID 不能为空。")
+    if not is_unified_agent_id(agent_id):
+        return redirect_to("/admin/agents", user_id=str(device.user_id), error="绑定智能体 ID 必须使用 am_ 统一格式。")
+    if get_active_agent(db, device.user_id, agent_id) is None:
+        return redirect_to("/admin/agents", user_id=str(device.user_id), error="绑定智能体不存在，请先创建智能体。")
+    device.display_name = display_name
+    device.agent_id = agent_id
+    device.description = description
+    device.updated_at = utcnow()
+    db.add(device)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(device.user_id), notice="设备已更新。")
+
+
+@router.post("/devices/{device_pk}/toggle")
+async def toggle_device(device_pk: uuid.UUID, request: Request, db: Session = Depends(get_db)) -> Response:
+    session = require_admin_context(request)
+    if isinstance(session, RedirectResponse):
+        return session
+    form = await read_urlencoded_form(request)
+    verify_csrf(session, form)
+    device = db.get(MemoryDevice, device_pk)
+    if device is None or device.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="设备不存在。")
+    device.is_active = not device.is_active
+    device.updated_at = utcnow()
+    db.add(device)
+    db.commit()
+    return redirect_to("/admin/agents", user_id=str(device.user_id), notice="设备状态已更新。")
 
 
 @router.get("/search-stopwords")
@@ -1258,10 +1488,23 @@ def memories_page(
         return redirect_to("/admin/memories", error="分类筛选参数无效。")
 
     query = (
-        select(Memory, User.name.label("user_name"), MemoryCategory.name.label("category_name"))
+        select(
+            Memory,
+            User.name.label("user_name"),
+            MemoryCategory.name.label("category_name"),
+            MemoryAgent.display_name.label("agent_name"),
+        )
         .select_from(Memory)
         .join(User, User.id == Memory.user_id)
         .join(MemoryCategory, MemoryCategory.id == Memory.category_id)
+        .outerjoin(
+            MemoryAgent,
+            and_(
+                MemoryAgent.user_id == Memory.user_id,
+                MemoryAgent.agent_id == Memory.agent_id,
+                MemoryAgent.deleted_at.is_(None),
+            ),
+        )
         .options(selectinload(Memory.attachments).defer(MemoryAttachment.image_bytes))
         .order_by(Memory.updated_at.desc())
     )
@@ -1292,14 +1535,16 @@ def memories_page(
     if until_dt:
         query = query.where(Memory.created_at <= until_dt)
 
+    raw_rows = db.execute(query.limit(limit)).all()
     rows = [
         {
-            "memory": memory,
-            "user_name": user_name,
-            "category_name": category_name,
-            "attachments": [attachment for attachment in memory.attachments if attachment.deleted_at is None],
+            "memory": raw[0],
+            "user_name": raw[1],
+            "category_name": raw[2],
+            "agent_name": (raw[3] if len(raw) > 3 else None) or raw[0].agent_id,
+            "attachments": [attachment for attachment in raw[0].attachments if attachment.deleted_at is None],
         }
-        for memory, user_name, category_name in db.execute(query.limit(limit)).all()
+        for raw in raw_rows
     ]
     memory_id_strings = [str(row["memory"].id) for row in rows]
     applied_ai_review_by_memory_id: dict[str, dict[str, object]] = {}
@@ -1332,7 +1577,21 @@ def memories_page(
     if selected_user_id:
         category_query = category_query.where(MemoryCategory.user_id == selected_user_id)
     categories = db.scalars(category_query).all()
-    agents = db.scalars(select(Memory.agent_id).distinct().order_by(Memory.agent_id)).all()
+    agent_options_query = (
+        select(MemoryAgent)
+        .where(MemoryAgent.deleted_at.is_(None))
+        .order_by(MemoryAgent.display_name, MemoryAgent.agent_id)
+    )
+    if selected_user_id:
+        agent_options_query = agent_options_query.where(MemoryAgent.user_id == selected_user_id)
+    agent_rows_for_filter = db.scalars(agent_options_query).all()
+    agent_options = [
+        {
+            "agent_id": getattr(agent, "agent_id", str(agent)),
+            "display_name": getattr(agent, "display_name", str(agent)),
+        }
+        for agent in agent_rows_for_filter
+    ]
     recent_ai_review_runs = db.scalars(
         select(AiMemoryReviewRun).order_by(AiMemoryReviewRun.created_at.desc()).limit(10)
     ).all()
@@ -1344,7 +1603,7 @@ def memories_page(
             session,
             users=users,
             categories=categories,
-            agents=agents,
+            agents=agent_options,
             recent_ai_review_runs=recent_ai_review_runs,
             rows=rows,
             filters={
@@ -1402,7 +1661,17 @@ def request_logs_page(
         query = query.where(RequestLog.user_id == selected_user_id)
     if q.strip():
         like = f"%{q.strip()}%"
-        query = query.where(or_(RequestLog.path.ilike(like), RequestLog.route_path.ilike(like), RequestLog.request_id.ilike(like)))
+        query = query.where(
+            or_(
+                RequestLog.path.ilike(like),
+                RequestLog.route_path.ilike(like),
+                RequestLog.request_id.ilike(like),
+                RequestLog.agent_id.ilike(like),
+                RequestLog.agent_name.ilike(like),
+                RequestLog.device_id.ilike(like),
+                RequestLog.device_name.ilike(like),
+            )
+        )
     since_dt = parse_date(since)
     until_dt = parse_date(until, end_of_day=True)
     if since_dt:
@@ -1610,6 +1879,7 @@ def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Dep
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记忆不存在。")
     memory, user_name, category_name = row
+    agent = get_active_agent(db, memory.user_id, memory.agent_id)
     return templates.TemplateResponse(
         request,
         "memory_detail.html",
@@ -1619,6 +1889,7 @@ def memory_detail_page(memory_id: uuid.UUID, request: Request, db: Session = Dep
             memory=memory,
             user_name=user_name,
             category_name=category_name,
+            agent_name=getattr(agent, "display_name", memory.agent_id) if agent else memory.agent_id,
             attachments=active_attachments(memory),
         ),
     )

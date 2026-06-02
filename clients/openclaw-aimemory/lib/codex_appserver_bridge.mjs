@@ -62,6 +62,7 @@ export async function runCodexAppServerCompactionBridge(params = {}, options = {
       "/v1/memories/extract",
       {
         agent_id: config.agentId,
+        ...(config.deviceId ? { device_id: config.deviceId } : {}),
         transcript,
         reason: "codex_appserver_compaction",
         metadata: {

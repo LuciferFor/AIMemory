@@ -17,7 +17,7 @@
       <select name="agent_id">
         <option value="">全部智能体</option>
         {% for agent in agents %}
-        <option value="{{ agent }}" {{ "selected" if filters.agent_id == agent else "" }}>{{ agent }}</option>
+        <option value="{{ agent.agent_id }}" {{ "selected" if filters.agent_id == agent.agent_id else "" }}>{{ agent.display_name }}{% if agent.display_name != agent.agent_id %} / {{ short_middle(agent.agent_id, 8, 6) }}{% endif %}</option>
         {% endfor %}
       </select>
     </label>
@@ -136,7 +136,7 @@
             </label>
             <label class="select-all-control" title="只选当前页未通过 AI 应用建议处理过的未删除记忆">
               <input type="checkbox" data-select-all="memory_ids" data-select-filter="not-ai-applied" aria-label="选择未通过 AI 处理过的记忆">
-              <span>未 AI</span>
+              <span>未处理</span>
             </label>
           </div>
         </th>
@@ -171,6 +171,7 @@
         <td><span class="badge">{{ row.category_name }}</span></td>
         <td class="owner-cell">
           <strong>{{ row.user_name }}</strong>
+          <span class="muted">{{ row.agent_name }}</span>
           <code title="{{ memory.agent_id }}">{{ short_middle(memory.agent_id, 8, 6) }}</code>
         </td>
         <td class="attachment-cell">
