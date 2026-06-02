@@ -2,19 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  buildCategorySelectionMessages,
   buildCleanCompactionTranscript,
   buildCleanCompactionTranscriptFromSessionFile,
   buildCleanMemoryQueryFromTurn,
   buildExtractionMessages,
   buildQueryFromTurn,
   containsForbiddenMemoryText,
-  fetchCategories,
   fetchMemoryContext,
   hasExplicitRememberIntent,
   isAllowedTurn,
   normalizeExtractedMemories,
-  parseSelectedCategory,
   parseEnvText,
   parseSessionJsonlMessages,
   resolveConfig,
@@ -237,28 +234,6 @@ test("fetchMemoryContext returns context text and items", async () => {
   assert.equal(body.category, "回答偏好");
 });
 
-test("fetchCategories returns category list", async () => {
-  const config = resolveConfig(
-    {},
-    {
-      envValues: {
-        AIMEMORY_BASE_URL: "http://aimemory",
-        AIMEMORY_API_KEY: "aim_key",
-        AIMEMORY_AGENT_ID: "agent",
-      },
-      processEnv: {},
-    },
-  );
-  const items = await fetchCategories(config, {
-    fetchImpl: async (url) => {
-      assert.equal(url, "http://aimemory/v1/memories/categories");
-      return new Response(JSON.stringify({ items: [{ name: "回答偏好" }] }), { status: 200 });
-    },
-  });
-
-  assert.equal(items[0].name, "回答偏好");
-});
-
 test("runtime context failure does not block prompt build", async () => {
   const handlers = {};
   const api = {
@@ -418,10 +393,10 @@ test("runtime message_received preloads context without prompt build", async () 
 
   assert.equal(contextBodies.length, 1);
   assert.equal(contextBodies[0].query, "老婆出个兔女郎的");
-  assert.equal(contextBodies[0].category, "其它");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
-test("runtime falls back to default category when category model is unavailable", async () => {
+test("runtime lets server choose category when category model is unavailable", async () => {
   const handlers = {};
   const contextBodies = [];
   const api = {
@@ -458,10 +433,10 @@ test("runtime falls back to default category when category model is unavailable"
   await handlers.before_prompt_build({ userInput: "你现在是什么模型", chatType: "direct" }, {});
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "其它");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
-test("runtime uses technical heuristic category when category model is unavailable", async () => {
+test("runtime sends technical requests without plugin-side category", async () => {
   const handlers = {};
   const contextBodies = [];
   const api = {
@@ -498,12 +473,13 @@ test("runtime uses technical heuristic category when category model is unavailab
   await handlers.before_prompt_build({ userInput: "onebot还是没回复啊", chatType: "direct" }, {});
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "技术记忆");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
-test("runtime overrides model fallback category with technical heuristic", async () => {
+test("runtime does not call plugin llm for category selection", async () => {
   const handlers = {};
   const contextBodies = [];
+  let llmCalls = 0;
   const api = {
     on(name, handler) {
       handlers[name] = handler;
@@ -516,6 +492,7 @@ test("runtime overrides model fallback category with technical heuristic", async
       },
       llm: {
         async complete() {
+          llmCalls += 1;
           return '{"category":"其它"}';
         },
       },
@@ -543,10 +520,11 @@ test("runtime overrides model fallback category with technical heuristic", async
   await handlers.before_prompt_build({ userInput: "AIMemory接口报错了", chatType: "direct" }, {});
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "技术记忆");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
+  assert.equal(llmCalls, 0);
 });
 
-test("runtime refreshes preloaded fallback category when prompt hook can use llm", async () => {
+test("runtime reuses preloaded server-side category request", async () => {
   const handlers = {};
   const contextBodies = [];
   const api = {
@@ -594,12 +572,11 @@ test("runtime refreshes preloaded fallback category when prompt hook can use llm
     { messageId: "message-1" },
   );
 
-  assert.equal(contextBodies.length, 2);
-  assert.equal(contextBodies[0].category, "其它");
-  assert.equal(contextBodies[1].category, "技术记忆");
+  assert.equal(contextBodies.length, 1);
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
-test("runtime defers message preload instead of using fallback when llm is unavailable", async () => {
+test("runtime message preload does not wait for plugin llm category selection", async () => {
   const handlers = {};
   const contextBodies = [];
   const api = {
@@ -648,10 +625,10 @@ test("runtime defers message preload instead of using fallback when llm is unava
   );
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "技术记忆");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
-test("runtime falls back to first category when configured fallback is absent", async () => {
+test("runtime does not fetch categories before context", async () => {
   const handlers = {};
   const contextBodies = [];
   const api = {
@@ -690,7 +667,7 @@ test("runtime falls back to first category when configured fallback is absent", 
   await handlers.before_prompt_build({ userInput: "你直接改啊", chatType: "direct" }, {});
 
   assert.equal(contextBodies.length, 1);
-  assert.equal(contextBodies[0].category, "回答风格");
+  assert.equal(Object.hasOwn(contextBodies[0], "category"), false);
 });
 
 test("runtime logs skip reasons for disallowed and empty turns", async () => {
@@ -1132,14 +1109,12 @@ test("memory extraction JSON normalizes and filters forbidden content", () => {
   assert.equal(memories[0].external_id, "preference-answer-style");
   assert.equal(memories[0].category, "回答偏好");
   assert.equal(memories[0].metadata.category, "preference");
-});
 
-test("category selection parses only known categories", () => {
-  const categories = [{ name: "回答偏好" }, { name: "爱吃的水果" }];
-
-  assert.equal(parseSelectedCategory('{"category":"回答偏好"}', categories), "回答偏好");
-  assert.equal(parseSelectedCategory('{"category":"不存在"}', categories), "");
-  assert.match(buildCategorySelectionMessages(categories, "用户喜欢苹果")[1].content, /爱吃的水果/);
+  const uncategorized = normalizeExtractedMemories(
+    JSON.stringify([{ title: "标题", content: "内容", metadata: { source: "test" } }]),
+  );
+  assert.equal(uncategorized.length, 1);
+  assert.equal(Object.hasOwn(uncategorized[0], "category"), false);
 });
 
 test("stable external id is deterministic", () => {

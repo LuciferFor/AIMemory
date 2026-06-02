@@ -91,14 +91,14 @@ Build prompt-ready memory context:
 curl -X POST http://localhost:10011/v1/memories/context \
   -H "Authorization: Bearer <api_key>" \
   -H "Content-Type: application/json" \
-  -d '{"agent_id":"assistant","category":"回答偏好","query":"short replies preference","top_k":8,"max_chars":3000}'
+  -d '{"agent_id":"assistant","query":"short replies preference","top_k":8,"max_chars":3000}'
 ```
 
 The response includes `context_text`, which can be inserted into the model's
-system/developer context before the current user message. Clients should choose
-the category before calling this endpoint; AIMemory only searches within that
-category. AIMemory does not call the main language model; clients still control
-the model request.
+system/developer context before the current user message. If admin AI is
+configured, AIMemory chooses the best existing category before retrieval; old
+clients may still pass `category` as a fallback. AIMemory does not call the main
+language model; clients still control the model request.
 
 Get the standard write policy for extracting memories before context compression:
 
@@ -108,8 +108,8 @@ curl -X GET http://localhost:10011/v1/memories/write-policy \
 ```
 
 The write-policy response includes the current category list. Memory extraction
-clients should choose an existing category first, and create a short new category
-only when none fits.
+clients may provide a category, but AIMemory can also classify writes on the
+server and create a short new category only when no existing category fits.
 
 Delete memory:
 
@@ -154,10 +154,11 @@ turn. The first version can automatically execute only restricted read-only
 
 When AI retrieval prompting is enabled in `/admin/ai-settings`, `/v1/memories/context`
 and `/v1/memories/search` first ask the configured OpenAI-compatible model to
-summarize the user request into a short intent and effective search keywords.
-The model never reads the memory database directly; PostgreSQL still performs
-the actual category-scoped retrieval. If the model call fails, AIMemory falls
-back to the local rule-based tokenizer.
+choose an existing memory category and summarize the user request into a short
+intent plus effective search keywords. The model never reads the memory database
+directly; PostgreSQL still performs the actual category-scoped retrieval. If
+the model call fails, AIMemory falls back to the client-provided category or the
+`其它` category when available.
 
 ## Configuration
 
@@ -220,11 +221,10 @@ The OpenClaw automatic memory plugin lives in:
 clients/openclaw-aimemory
 ```
 
-It is an OpenClaw native plugin that fetches the category list, asks the current
-OpenClaw model to choose one category, calls `/v1/memories/context`, and injects
-the returned memory context. By default it runs for private/direct/DM sessions
-across all channels, while group/channel memory injection stays disabled for
-privacy.
+It is an OpenClaw native plugin that sends the current user input to
+`/v1/memories/context`, lets AIMemory choose the category, and injects the
+returned memory context. By default it runs for private/direct/DM sessions across
+all channels, while group/channel memory injection stays disabled for privacy.
 
 Install it on an OpenClaw machine with:
 

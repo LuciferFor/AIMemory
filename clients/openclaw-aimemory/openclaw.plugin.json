@@ -68,6 +68,7 @@
       },
       "fallbackCategory": {
         "type": "string",
+        "description": "Deprecated compatibility setting. The AIMemory server now chooses categories.",
         "default": "其它"
       },
       "preloadContextOnMessageReceived": {

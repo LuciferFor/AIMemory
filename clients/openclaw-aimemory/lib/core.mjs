@@ -653,16 +653,15 @@ export function normalizeMemoryCandidate(candidate) {
       ? candidate.metadata
       : {};
   const category = String(candidate.category || metadata.category || metadata.kind || "").trim();
-  if (!category) {
-    return null;
-  }
   const memory = {
     external_id: sanitizeExternalId(candidate.external_id || candidate.externalId || ""),
-    category: category.slice(0, 128),
     title: title.slice(0, 512),
     content,
     metadata,
   };
+  if (category) {
+    memory.category = category.slice(0, 128);
+  }
   if (!memory.external_id) {
     memory.external_id = stableExternalId(memory);
   }
@@ -716,21 +715,21 @@ export async function aimemoryRequest(config, method, pathName, payload, options
 }
 
 export async function fetchMemoryContext(config, query, options = {}) {
-  const category = options.category || config.category;
-  if (!category) {
-    return { contextText: "", items: [] };
+  const category = options.category || config.category || "";
+  const body = {
+    agent_id: config.agentId,
+    query,
+    top_k: config.topK,
+    max_chars: config.maxChars,
+  };
+  if (category) {
+    body.category = category;
   }
   const response = await aimemoryRequest(
     config,
     "POST",
     "/v1/memories/context",
-    {
-      agent_id: config.agentId,
-      category,
-      query,
-      top_k: config.topK,
-      max_chars: config.maxChars,
-    },
+    body,
     options,
   );
   return {
@@ -743,25 +742,23 @@ export async function fetchWritePolicy(config, options = {}) {
   return aimemoryRequest(config, "GET", "/v1/memories/write-policy", null, options);
 }
 
-export async function fetchCategories(config, options = {}) {
-  const response = await aimemoryRequest(config, "GET", "/v1/memories/categories", null, options);
-  return Array.isArray(response.items) ? response.items : [];
-}
-
 export async function writeMemory(config, memory, options = {}) {
+  const body = {
+    agent_id: config.agentId,
+    external_id: memory.external_id,
+    title: memory.title,
+    content: memory.content,
+    metadata: memory.metadata || {},
+    occurred_at: memory.occurred_at,
+  };
+  if (memory.category) {
+    body.category = memory.category;
+  }
   return aimemoryRequest(
     config,
     "POST",
     "/v1/memories",
-    {
-      agent_id: config.agentId,
-      external_id: memory.external_id,
-      category: memory.category,
-      title: memory.title,
-      content: memory.content,
-      metadata: memory.metadata || {},
-      occurred_at: memory.occurred_at,
-    },
+    body,
     options,
   );
 }
@@ -802,39 +799,4 @@ export function buildExtractionMessages(policy, sourceText, reason) {
       content: `来源: ${reason}\n\n请从以下内容提取值得长期保存的记忆，忽略密码、密钥、token、sudo 密码和一次性闲聊。\n\n${sourceText}`,
     },
   ];
-}
-
-export function buildCategorySelectionMessages(categories, query) {
-  const list = Array.isArray(categories) ? categories : [];
-  const categoryText = list
-    .map((item) => `- ${item.name}${item.description ? `：${item.description}` : ""}`)
-    .join("\n");
-  return [
-    {
-      role: "system",
-      content:
-        "你要为本轮用户请求选择一个长期记忆事务分类。只能从已有分类中选择；优先选择最接近的已有分类，不要轻易选择兜底分类或 null。涉及部署、接口、插件、数据库、OneBot、OpenClaw、AIMemory、报错和连接问题时，应优先选择技术/流程/资料/自动化等最接近分类。只有完全无法判断时才输出 null。只输出 JSON，例如 {\"category\":\"爱吃的水果\"} 或 {\"category\":null}。",
-    },
-    {
-      role: "user",
-      content: `已有分类:\n${categoryText || "无"}\n\n当前请求:\n${query}`,
-    },
-  ];
-}
-
-export function parseSelectedCategory(value, categories) {
-  const text = stripJsonCodeFence(extractTextFromLlmResult(value));
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    const normalizedText = String(text || "").trim();
-    parsed = { category: normalizedText || null };
-  }
-  const selected = String(parsed?.category || "").trim();
-  if (!selected) {
-    return "";
-  }
-  const known = new Set((categories || []).map((item) => String(item.name || "").trim()));
-  return known.has(selected) ? selected : "";
 }

@@ -370,12 +370,12 @@ def test_context_returns_empty_when_category_is_missing(monkeypatch) -> None:
     assert summary["ignored_terms"] == ["不存在:分类不存在"]
 
 
-def test_context_requires_category(monkeypatch) -> None:
+def test_context_allows_missing_category(monkeypatch) -> None:
     client = _client_with_user(monkeypatch)
 
     response = client.post("/v1/memories/context", json={"agent_id": "assistant", "query": "偏好"})
 
-    assert response.status_code == 422
+    assert response.status_code == 200
 
 
 def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
@@ -453,6 +453,96 @@ def test_search_results_uses_ai_query_analysis_when_available(monkeypatch) -> No
     assert len(calls) == 1
     assert calls[0][4] == "黑丝 兔女郎 腿更粗 身材更好"
     assert calls[0][5] == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
+
+
+def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_category_with_config",
+        lambda *args, **kwargs: routes.CategoryAnalysis(
+            category="偏好",
+            matched_existing=True,
+            confidence=0.86,
+            reason="请求回答偏好",
+            duration_ms=9.0,
+        ),
+    )
+    monkeypatch.setattr(
+        routes,
+        "analyze_memory_query",
+        lambda *args, **kwargs: routes.QueryAnalysis(
+            intent_summary="回答偏好",
+            keywords=["苹果"],
+            negative_keywords=[],
+            duration_ms=12.5,
+        ),
+    )
+    monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
+    monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (args[4], []))
+    payload = MemorySearchRequest(agent_id="assistant", query="苹果")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _CategoryListDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is True
+    assert payload.category == "偏好"
+    assert query_terms == ["苹果"]
+    assert query_analysis["category_source"] == "ai"
+    assert query_analysis["selected_category"] == "偏好"
+    assert query_analysis["category_confidence"] == 0.86
+    assert len(calls) == 1
+
+
+def test_search_results_does_not_create_unknown_ai_category_for_query(monkeypatch) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        routes,
+        "get_llm_config",
+        lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
+    )
+    monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
+    monkeypatch.setattr(
+        routes,
+        "analyze_category_with_config",
+        lambda *args, **kwargs: routes.CategoryAnalysis(
+            category="临时问候",
+            matched_existing=False,
+            confidence=0.4,
+            reason="不是已有分类",
+            duration_ms=7.0,
+        ),
+    )
+    monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
+    payload = MemorySearchRequest(agent_id="assistant", query="早")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _NoCategoryDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == []
+    assert used_vector is False
+    assert category_found is False
+    assert query_terms == []
+    assert ignored_terms == ["临时问候:分类不存在"]
+    assert query_analysis["category_source"] == "ai"
+    assert query_analysis["selected_category"] == "临时问候"
+    assert calls == []
 
 
 def test_search_results_does_not_fallback_when_ai_keywords_are_empty(monkeypatch) -> None:

@@ -139,6 +139,19 @@
                 </span>
               </div>
               {% endif %}
+              {% if summary.get("category_source") or summary.get("selected_category") %}
+              <div>
+                <span class="summary-label">AI 选择分类</span>
+                <span class="term-list">
+                  {% if summary.get("category_source") %}<code class="term-chip">来源 {{ summary.get("category_source") }}</code>{% endif %}
+                  {% if summary.get("selected_category") %}<code class="term-chip hit">{{ summary.get("selected_category") }}</code>{% endif %}
+                  {% if summary.get("category_confidence") %}<code class="term-chip">置信 {{ summary.get("category_confidence") }}</code>{% endif %}
+                  {% if summary.get("category_duration_ms") %}<code class="term-chip">耗时 {{ summary.get("category_duration_ms") }}ms</code>{% endif %}
+                  {% if summary.get("category_reason") %}<code class="term-chip">{{ summary.get("category_reason") }}</code>{% endif %}
+                  {% if summary.get("category_error") %}<code class="term-chip ignored">{{ summary.get("category_error") }}</code>{% endif %}
+                </span>
+              </div>
+              {% endif %}
               {% if summary.get("keyword_source") %}
               <div>
                 <span class="summary-label">AI 理解</span>

@@ -38,7 +38,7 @@ class MemoryAttachmentMeta(BaseModel):
 class MemoryUpsertRequest(BaseModel):
     agent_id: AgentId
     external_id: ExternalId
-    category: CategoryName
+    category: CategoryName | None = None
     title: Title
     content: Content
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -55,7 +55,7 @@ class MemoryUpsertResponse(BaseModel):
 
 class MemorySearchRequest(BaseModel):
     agent_id: AgentId
-    category: CategoryName
+    category: CategoryName | None = None
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=10, ge=1, le=50)
     metadata_filter: dict[str, Any] | None = None
@@ -104,7 +104,7 @@ class MemorySearchResponse(BaseModel):
 
 class MemoryContextRequest(BaseModel):
     agent_id: AgentId
-    category: CategoryName
+    category: CategoryName | None = None
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     top_k: int = Field(default=8, ge=1, le=50)
     metadata_filter: dict[str, Any] | None = None

@@ -8,21 +8,19 @@ requests or before context compaction.
 
 - Runs on all OpenClaw channels, but only for private/direct/DM sessions by
   default.
-- Calls `GET /v1/memories/categories`, asks the current OpenClaw model to pick
-  one existing category, then calls `POST /v1/memories/context`. The plugin
-  preloads context in `message_received` and reuses it in `before_prompt_build`,
-  so AIMemory request logs still show a `/context` request even when no memory
-  is returned.
-- If category selection is unavailable or empty, the plugin falls back to
-  `fallbackCategory` (`其它` by default), or the first existing category.
+- Calls `POST /v1/memories/context` with the current user input and lets the
+  AIMemory server choose the category. The plugin preloads context in
+  `message_received` and reuses it in `before_prompt_build`, so AIMemory request
+  logs still show a `/context` request even when no memory is returned.
 - Builds the AIMemory query only from the current user input. Model replies,
   previous messages, static prompt files such as `IDENTITY.md`, `SOUL.md`, and
   `MEMORY.md` are not sent to AIMemory for retrieval.
 - Injects returned `context_text` into the current model turn.
 - Calls `GET /v1/memories/write-policy` and `POST /v1/memories` when saving;
-  extracted memories must include `category`. Before compaction, only
-  structured user/assistant messages are extracted by default, and the
-  extraction prompt asks the model to save memories in a third-person style.
+  extracted memories may include `category`, but AIMemory can classify them on
+  the server when admin AI is configured. Before compaction, only structured
+  user/assistant messages are extracted by default, and the extraction prompt
+  asks the model to save memories in a third-person style.
 - Does not print API keys or full memory content in logs.
 - Keeps group/channel memory injection disabled unless explicitly configured.
 
@@ -106,6 +104,9 @@ The installer writes:
 uses prompt/history text; AIMemory queries are based on the current user input
 only.
 
+`fallbackCategory` is kept for old configs but no longer drives retrieval;
+AIMemory server-side AI now selects the category.
+
 ## Verify
 
 ```bash
@@ -116,14 +117,11 @@ openclaw plugins doctor
 Then send a private message to OpenClaw. AIMemory API logs should show:
 
 ```text
-GET /v1/memories/categories
 POST /v1/memories/context
 ```
 
-If the model cannot choose a clear category, the plugin skips memory context for
-that turn only when no categories exist. Otherwise it falls back to `其它` (or
-the first category) and still calls `/v1/memories/context`, so the request log
-shows whether the result was empty or injected.
+The request log should show the server-selected category source, selected
+category, keyword analysis, and whether memory context was empty or injected.
 
 Check the AIMemory request log `query_preview` after a private message. It
 should show the current user request and recent ordinary dialogue only, not

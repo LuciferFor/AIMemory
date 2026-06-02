@@ -14,7 +14,7 @@ from aimemory.api.deps import get_current_user
 from aimemory.core.config import get_settings
 from aimemory.db.session import get_db
 from aimemory.models.user import User
-from aimemory.repositories.memory_categories import get_active_category, list_category_summaries
+from aimemory.repositories.memory_categories import UNCATEGORIZED_CATEGORY, get_active_category, list_category_summaries
 from aimemory.repositories.memories import (
     SearchAttachment,
     filter_high_frequency_terms,
@@ -47,6 +47,7 @@ from aimemory.schemas.memory import (
 from aimemory.services.attachments import AttachmentValidationError
 from aimemory.services.ai_crypto import decrypt_secret
 from aimemory.services.ai_memory_review import get_llm_config
+from aimemory.services.category_analysis import CategoryAnalysis, analyze_memory_category
 from aimemory.services.openai_compatible import chat_completion
 from aimemory.services.query_analysis import QueryAnalysis, analyze_memory_query, effective_terms_from_ai_keywords
 from aimemory.services.text import filter_query_terms, normalize_query
@@ -140,14 +141,17 @@ EXTRACT_DEDUPE_TTL_SECONDS = 120
 
 @router.post("", response_model=MemoryUpsertResponse)
 def write_memory(
+    request: Request,
     payload: MemoryUpsertRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MemoryUpsertResponse:
     start = time.perf_counter()
     retried_after_integrity_error = False
+    category_name, category_meta = resolve_category_for_write(db, current_user, payload)
+    payload_for_write = payload.model_copy(update={"category": category_name})
     try:
-        memory, action = upsert_memory(db, current_user.id, payload)
+        memory, action = upsert_memory(db, current_user.id, payload_for_write)
         db.commit()
     except AttachmentValidationError as exc:
         db.rollback()
@@ -156,12 +160,18 @@ def write_memory(
         retried_after_integrity_error = True
         db.rollback()
         try:
-            memory, action = upsert_memory(db, current_user.id, payload)
+            memory, action = upsert_memory(db, current_user.id, payload_for_write)
             db.commit()
         except AttachmentValidationError as exc:
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
+    request.state.request_log_response_summary = build_write_response_summary(
+        payload_for_write,
+        memory.id,
+        action,
+        category_meta,
+    )
     logger.info(
         "memory.write",
         extra={
@@ -169,12 +179,14 @@ def write_memory(
             "user_id": current_user.id,
             "agent_id": payload.agent_id,
             "external_id": payload.external_id,
-            "category": payload.category,
+            "category": category_name,
+            "category_source": category_meta.get("category_source"),
+            "category_confidence": category_meta.get("category_confidence"),
             "action": action,
             "memory_id": memory.id,
             "indexing_mode": "text",
-            "attachment_count": len(payload.attachments or []),
-            "attachments_replaced": payload.attachments is not None,
+            "attachment_count": len(payload_for_write.attachments or []),
+            "attachments_replaced": payload_for_write.attachments is not None,
             "retried_after_integrity_error": retried_after_integrity_error,
             "duration_ms": round((time.perf_counter() - start) * 1000, 2),
         },
@@ -207,6 +219,8 @@ def search_memory(
             "agent_id": payload.agent_id,
             "category": payload.category,
             "category_found": category_found,
+            "category_source": query_analysis.get("category_source"),
+            "category_confidence": query_analysis.get("category_confidence"),
             "top_k": payload.top_k,
             "result_count": len(results),
             "used_vector": used_vector,
@@ -272,6 +286,8 @@ def build_memory_context(
             "agent_id": payload.agent_id,
             "category": payload.category,
             "category_found": category_found,
+            "category_source": query_analysis.get("category_source"),
+            "category_confidence": query_analysis.get("category_confidence"),
             "top_k": payload.top_k,
             "result_count": len(results),
             "used_vector": used_vector,
@@ -475,6 +491,183 @@ def delete_memory(
     return MemoryDeleteResponse(deleted=deleted)
 
 
+def resolve_category_for_write(
+    db: Session,
+    current_user: User,
+    payload: MemoryUpsertRequest,
+) -> tuple[str, dict[str, Any]]:
+    client_category = str(payload.category or "").strip()
+    categories = list_category_summaries(db, current_user.id)
+    config = get_llm_config(db)
+    if category_ai_enabled(config):
+        try:
+            analysis = analyze_category_with_config(
+                config,
+                "write",
+                write_category_text(payload),
+                categories,
+            )
+            if analysis.category:
+                return analysis.category, category_meta("ai", analysis)
+            if client_category:
+                meta = category_meta("client", analysis, reason=analysis.reason or "ai_empty_selection")
+                meta["selected_category"] = client_category
+                return client_category, meta
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="AI 分类失败且未提供分类。",
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if client_category:
+                meta = category_meta("client", error=str(exc), reason="ai_failed")
+                meta["selected_category"] = client_category
+                return client_category, meta
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="AI 分类失败且未提供分类。",
+            ) from exc
+
+    if client_category:
+        meta = category_meta("client")
+        meta["selected_category"] = client_category
+        return client_category, meta
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="未提供分类，且后台 AI 分类未启用。",
+    )
+
+
+def resolve_category_for_query(
+    db: Session,
+    current_user: User,
+    payload: MemorySearchRequest | MemoryContextRequest,
+) -> tuple[Any | None, dict[str, Any]]:
+    client_category = str(payload.category or "").strip()
+    categories = list_category_summaries(db, current_user.id)
+    config = get_llm_config(db)
+
+    if category_ai_enabled(config):
+        try:
+            analysis = analyze_category_with_config(
+                config,
+                "context" if isinstance(payload, MemoryContextRequest) else "search",
+                payload.query,
+                categories,
+            )
+            meta = category_meta("ai", analysis)
+            if not analysis.category:
+                meta["ignored_terms"] = ["分类未选择"]
+                return None, meta
+            category = get_active_category(db, current_user.id, analysis.category)
+            if category is None:
+                meta["ignored_terms"] = [f"{analysis.category}:分类不存在"]
+                return None, meta
+            meta["selected_category"] = category.name
+            meta["category_found"] = True
+            return category, meta
+        except Exception as exc:
+            if client_category:
+                category = get_active_category(db, current_user.id, client_category)
+                meta = category_meta("client", error=str(exc), reason="ai_failed")
+                meta["selected_category"] = client_category
+                meta["category_found"] = category is not None
+                if category is None:
+                    meta["ignored_terms"] = [f"{client_category}:分类不存在"]
+                return category, meta
+            fallback = get_active_category(db, current_user.id, UNCATEGORIZED_CATEGORY)
+            meta = category_meta("fallback", error=str(exc), reason="ai_failed")
+            meta["selected_category"] = UNCATEGORIZED_CATEGORY
+            meta["category_found"] = fallback is not None
+            if fallback is None:
+                meta["ignored_terms"] = [f"{UNCATEGORIZED_CATEGORY}:分类不存在"]
+            return fallback, meta
+
+    if client_category:
+        category = get_active_category(db, current_user.id, client_category)
+        meta = category_meta("client")
+        meta["selected_category"] = client_category
+        meta["category_found"] = category is not None
+        if category is None:
+            meta["ignored_terms"] = [f"{client_category}:分类不存在"]
+        return category, meta
+
+    fallback = get_active_category(db, current_user.id, UNCATEGORIZED_CATEGORY)
+    meta = category_meta("fallback", reason="ai_disabled")
+    meta["selected_category"] = UNCATEGORIZED_CATEGORY
+    meta["category_found"] = fallback is not None
+    if fallback is None:
+        meta["ignored_terms"] = [f"{UNCATEGORIZED_CATEGORY}:分类不存在"]
+    return fallback, meta
+
+
+def analyze_category_with_config(
+    config: Any,
+    operation: str,
+    text_value: str,
+    categories: list[Any],
+) -> CategoryAnalysis:
+    api_key = decrypt_secret(config.encrypted_api_key, get_settings().ai_config_encryption_secret)
+    return analyze_memory_category(
+        config,
+        api_key,
+        text=text_value,
+        operation=operation,
+        categories=categories,
+    )
+
+
+def category_ai_enabled(config: Any) -> bool:
+    return bool(config is not None and getattr(config, "enabled", False) and getattr(config, "encrypted_api_key", None))
+
+
+def category_meta(
+    source: str,
+    analysis: CategoryAnalysis | None = None,
+    *,
+    error: str = "",
+    reason: str = "",
+) -> dict[str, Any]:
+    selected = analysis.category if analysis else ""
+    return {
+        "category_source": source,
+        "selected_category": selected,
+        "category_found": bool(analysis.matched_existing) if analysis else False,
+        "category_matched_existing": bool(analysis.matched_existing) if analysis else False,
+        "category_confidence": analysis.confidence if analysis else 0.0,
+        "category_reason": reason or (analysis.reason if analysis else ""),
+        "category_error": str(error or "")[:300],
+        "category_duration_ms": analysis.duration_ms if analysis else 0.0,
+        "ignored_terms": [],
+    }
+
+
+def with_category_meta(query_analysis: dict[str, Any], category_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **query_analysis,
+        "category_source": category_info.get("category_source", ""),
+        "selected_category": category_info.get("selected_category", ""),
+        "category_reason": category_info.get("category_reason", ""),
+        "category_confidence": category_info.get("category_confidence", 0.0),
+        "category_error": category_info.get("category_error", ""),
+        "category_duration_ms": category_info.get("category_duration_ms", 0.0),
+    }
+
+
+def write_category_text(payload: MemoryUpsertRequest) -> str:
+    metadata_text = json.dumps(payload.metadata or {}, ensure_ascii=False, sort_keys=True)
+    return "\n".join(
+        part
+        for part in [
+            f"标题: {payload.title}",
+            f"正文: {payload.content}",
+            f"metadata: {metadata_text}" if metadata_text != "{}" else "",
+        ]
+        if part
+    )
+
+
 def _search_results(
     db: Session,
     current_user: User,
@@ -482,19 +675,21 @@ def _search_results(
 ):
     start = time.perf_counter()
     stopwords = active_search_stopword_terms(db, current_user.id)
-    category = get_active_category(db, current_user.id, payload.category)
+    category, category_meta = resolve_category_for_query(db, current_user, payload)
+    payload.category = category_meta.get("selected_category") or payload.category
     if category is None:
         return (
             [],
             False,
             round((time.perf_counter() - start) * 1000, 2),
             [],
-            [f"{payload.category}:分类不存在"],
+            category_meta.get("ignored_terms") or [f"{payload.category or ''}:分类不存在"],
             False,
-            default_query_analysis_meta("disabled"),
+            with_category_meta(default_query_analysis_meta("disabled"), category_meta),
         )
 
     query_terms, ignored_terms, query_analysis = query_terms_for_search(db, payload, stopwords)
+    query_analysis = with_category_meta(query_analysis, category_meta)
     query_terms, high_frequency_ignored_terms = filter_high_frequency_terms(
         db,
         current_user.id,
@@ -532,7 +727,7 @@ def query_terms_for_search(
             config,
             api_key,
             query=payload.query,
-            category=payload.category,
+            category=payload.category or "",
             agent_id=payload.agent_id,
         )
         query_terms, ignored_terms = effective_terms_from_ai_keywords(analysis.keywords, stopwords)
@@ -627,6 +822,12 @@ def build_context_response_summary(
         "top_k": top_k,
         "max_chars": max_chars,
         "keyword_source": query_analysis.get("keyword_source", "disabled"),
+        "category_source": query_analysis.get("category_source", ""),
+        "selected_category": query_analysis.get("selected_category", category),
+        "category_reason": query_analysis.get("category_reason", ""),
+        "category_confidence": query_analysis.get("category_confidence", 0.0),
+        "category_error": query_analysis.get("category_error", ""),
+        "category_duration_ms": query_analysis.get("category_duration_ms", 0.0),
         "intent_summary": query_analysis.get("intent_summary", ""),
         "ai_keywords": query_analysis.get("ai_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
         "negative_keywords": query_analysis.get("negative_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
@@ -654,6 +855,31 @@ def build_context_response_summary(
             }
             for result in results
         ],
+    }
+
+
+def build_write_response_summary(
+    payload: MemoryUpsertRequest,
+    memory_id: UUID,
+    action: str,
+    category_info: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "type": "write",
+        "agent_id": payload.agent_id,
+        "external_id": payload.external_id,
+        "memory_id": str(memory_id),
+        "action": action,
+        "category": payload.category,
+        "category_source": category_info.get("category_source", ""),
+        "selected_category": category_info.get("selected_category", payload.category),
+        "category_reason": category_info.get("category_reason", ""),
+        "category_confidence": category_info.get("category_confidence", 0.0),
+        "category_error": category_info.get("category_error", ""),
+        "category_duration_ms": category_info.get("category_duration_ms", 0.0),
+        "title_preview": preview_text(payload.title, REQUEST_LOG_QUERY_PREVIEW_CHARS),
+        "content_preview": preview_text(payload.content, REQUEST_LOG_CONTENT_PREVIEW_CHARS),
+        "attachment_count": len(payload.attachments or []),
     }
 
 
