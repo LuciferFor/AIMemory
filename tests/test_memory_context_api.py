@@ -217,8 +217,12 @@ def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> Non
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
     monkeypatch.setattr(
         routes,
-        "analyze_memory_query",
-        lambda *args, **kwargs: routes.QueryAnalysis(
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
+            category="偏好",
+            matched_existing=True,
+            confidence=0.88,
+            reason="回答偏好",
             intent_summary="查找回复偏好",
             keywords=["回答偏好", "老婆"],
             negative_keywords=["长篇"],
@@ -239,6 +243,7 @@ def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> Non
     assert response.status_code == 200
     summary = records[0]["response_summary"]
     assert summary["keyword_source"] == "ai"
+    assert summary["analysis_mode"] == "combined"
     assert summary["intent_summary"] == "查找回复偏好"
     assert summary["ai_keywords"] == ["回答偏好", "老婆"]
     assert summary["negative_keywords"] == ["长篇"]
@@ -247,6 +252,8 @@ def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> Non
     assert summary["ai_duration_ms"] == 8.5
     assert summary["ai_usage"] == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
     assert summary["ai_total_tokens"] == 18
+    assert summary["ai_request_total_tokens"] == 18
+    assert summary["category_total_tokens"] == 0
     assert summary["query_terms"] == ["回答偏好"]
 
 
@@ -426,12 +433,17 @@ def test_search_results_uses_ai_query_analysis_when_available(monkeypatch) -> No
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
     monkeypatch.setattr(
         routes,
-        "analyze_memory_query",
-        lambda *args, **kwargs: routes.QueryAnalysis(
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
+            category="偏好",
+            matched_existing=True,
+            confidence=0.9,
+            reason="图片偏好",
             intent_summary="生成兔女郎图片",
             keywords=["黑丝", "兔女郎", "腿更粗", "身材更好"],
             negative_keywords=[],
             duration_ms=12.5,
+            usage={"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
         ),
     )
     monkeypatch.setattr(routes, "search_memories", _fake_search_memories)
@@ -450,9 +462,11 @@ def test_search_results_uses_ai_query_analysis_when_available(monkeypatch) -> No
     assert query_terms == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
     assert ignored_terms == []
     assert query_analysis["keyword_source"] == "ai"
+    assert query_analysis["analysis_mode"] == "combined"
     assert query_analysis["intent_summary"] == "生成兔女郎图片"
     assert query_analysis["ai_keywords"] == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
     assert query_analysis["ai_duration_ms"] == 12.5
+    assert query_analysis["ai_request_total_tokens"] == 100
     assert len(calls) == 1
     assert calls[0][4] == "黑丝 兔女郎 腿更粗 身材更好"
     assert calls[0][5] == ["黑丝", "兔女郎", "腿更粗", "身材更好"]
@@ -469,25 +483,17 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
     monkeypatch.setattr(
         routes,
-        "analyze_category_with_config",
-        lambda *args, **kwargs: routes.CategoryAnalysis(
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
             category="偏好",
             matched_existing=True,
             confidence=0.86,
             reason="请求回答偏好",
             duration_ms=9.0,
-            usage={"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
-        ),
-    )
-    monkeypatch.setattr(
-        routes,
-        "analyze_memory_query",
-        lambda *args, **kwargs: routes.QueryAnalysis(
             intent_summary="回答偏好",
             keywords=["苹果"],
             negative_keywords=[],
-            duration_ms=12.5,
-            usage={"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17},
+            usage={"prompt_tokens": 32, "completion_tokens": 9, "total_tokens": 41},
         ),
     )
     monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
@@ -508,9 +514,10 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
     assert query_analysis["category_source"] == "ai"
     assert query_analysis["selected_category"] == "偏好"
     assert query_analysis["category_confidence"] == 0.86
-    assert query_analysis["category_total_tokens"] == 28
-    assert query_analysis["ai_total_tokens"] == 17
-    assert query_analysis["ai_request_total_tokens"] == 45
+    assert query_analysis["category_total_tokens"] == 0
+    assert query_analysis["ai_total_tokens"] == 41
+    assert query_analysis["ai_request_total_tokens"] == 41
+    assert query_analysis["analysis_mode"] == "combined"
     assert len(calls) == 1
 
 
@@ -525,13 +532,15 @@ def test_search_results_does_not_create_unknown_ai_category_for_query(monkeypatc
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
     monkeypatch.setattr(
         routes,
-        "analyze_category_with_config",
-        lambda *args, **kwargs: routes.CategoryAnalysis(
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
             category="临时问候",
             matched_existing=False,
             confidence=0.4,
             reason="不是已有分类",
             duration_ms=7.0,
+            intent_summary="问候",
+            keywords=[],
         ),
     )
     monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
@@ -564,8 +573,12 @@ def test_search_results_does_not_fallback_when_ai_keywords_are_empty(monkeypatch
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
     monkeypatch.setattr(
         routes,
-        "analyze_memory_query",
-        lambda *args, **kwargs: routes.QueryAnalysis(
+        "analyze_memory_request",
+        lambda *args, **kwargs: routes.MemoryRequestAnalysis(
+            category="偏好",
+            matched_existing=True,
+            confidence=0.8,
+            reason="图片偏好",
             intent_summary="弱请求词",
             keywords=["老婆", "换成", "一点", "一些"],
             negative_keywords=[],
@@ -600,7 +613,7 @@ def test_search_results_falls_back_when_ai_query_analysis_fails(monkeypatch) -> 
         lambda db: SimpleNamespace(enabled=True, query_analysis_enabled=True, encrypted_api_key="encrypted"),
     )
     monkeypatch.setattr(routes, "decrypt_secret", lambda *args, **kwargs: "sk-test")
-    monkeypatch.setattr(routes, "analyze_memory_query", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad json")))
+    monkeypatch.setattr(routes, "analyze_memory_request", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad json")))
     monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
     payload = MemorySearchRequest(agent_id="assistant", category="偏好", query="苹果")
 

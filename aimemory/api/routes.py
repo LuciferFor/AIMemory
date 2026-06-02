@@ -49,7 +49,13 @@ from aimemory.services.ai_crypto import decrypt_secret
 from aimemory.services.ai_memory_review import get_llm_config
 from aimemory.services.category_analysis import CategoryAnalysis, analyze_memory_category
 from aimemory.services.openai_compatible import chat_completion, token_usage_summary
-from aimemory.services.query_analysis import QueryAnalysis, analyze_memory_query, effective_terms_from_ai_keywords
+from aimemory.services.query_analysis import (
+    MemoryRequestAnalysis,
+    QueryAnalysis,
+    analyze_memory_query,
+    analyze_memory_request,
+    effective_terms_from_ai_keywords,
+)
 from aimemory.services.text import filter_query_terms, normalize_query
 
 logger = logging.getLogger(__name__)
@@ -692,21 +698,43 @@ def _search_results(
 ):
     start = time.perf_counter()
     stopwords = active_search_stopword_terms(db, current_user.id)
-    category, category_meta = resolve_category_for_query(db, current_user, payload)
-    payload.category = category_meta.get("selected_category") or payload.category
+    config = get_llm_config(db)
+    if query_analysis_enabled(config):
+        category, query_terms, ignored_terms, query_analysis = combined_ai_query_context(
+            db,
+            current_user,
+            payload,
+            stopwords,
+            config,
+        )
+        payload.category = query_analysis.get("selected_category") or payload.category
+    else:
+        category, category_meta = resolve_category_for_query(db, current_user, payload)
+        payload.category = category_meta.get("selected_category") or payload.category
+        if category is None:
+            return (
+                [],
+                False,
+                round((time.perf_counter() - start) * 1000, 2),
+                [],
+                category_meta.get("ignored_terms") or [f"{payload.category or ''}:分类不存在"],
+                False,
+                with_category_meta(default_query_analysis_meta("disabled"), category_meta),
+            )
+        query_terms, ignored_terms, query_analysis = query_terms_for_search(db, payload, stopwords)
+        query_analysis = with_category_meta(query_analysis, category_meta)
+
     if category is None:
         return (
             [],
             False,
             round((time.perf_counter() - start) * 1000, 2),
             [],
-            category_meta.get("ignored_terms") or [f"{payload.category or ''}:分类不存在"],
+            ignored_terms or [f"{payload.category or ''}:分类不存在"],
             False,
-            with_category_meta(default_query_analysis_meta("disabled"), category_meta),
+            query_analysis,
         )
 
-    query_terms, ignored_terms, query_analysis = query_terms_for_search(db, payload, stopwords)
-    query_analysis = with_category_meta(query_analysis, category_meta)
     query_terms, high_frequency_ignored_terms = filter_high_frequency_terms(
         db,
         current_user.id,
@@ -726,6 +754,72 @@ def _search_results(
     normalized_query = normalize_query(" ".join(query_terms))
     results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms)
     return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
+
+
+def combined_ai_query_context(
+    db: Session,
+    current_user: User,
+    payload: MemorySearchRequest | MemoryContextRequest,
+    stopwords: set[str],
+    config: Any,
+) -> tuple[Any | None, list[str], list[str], dict[str, Any]]:
+    try:
+        categories = list_category_summaries(db, current_user.id)
+        api_key = decrypt_secret(config.encrypted_api_key, get_settings().ai_config_encryption_secret)
+        analysis = analyze_memory_request(
+            config,
+            api_key,
+            query=payload.query,
+            operation="context" if isinstance(payload, MemoryContextRequest) else "search",
+            categories=categories,
+            agent_id=payload.agent_id,
+        )
+        meta = combined_query_analysis_meta("ai", analysis)
+        if not analysis.category:
+            meta["ignored_terms"] = ["分类未选择"]
+            return None, [], ["分类未选择"], meta
+        category = get_active_category(db, current_user.id, analysis.category)
+        if category is None:
+            ignored = [f"{analysis.category}:分类不存在"]
+            meta["ignored_terms"] = ignored
+            meta["category_found"] = False
+            return None, [], ignored, meta
+        meta["selected_category"] = category.name
+        meta["category_found"] = True
+        query_terms, ignored_terms = effective_terms_from_ai_keywords(analysis.keywords, stopwords)
+        meta["ai_ignored_terms"] = ignored_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
+        return category, query_terms, ignored_terms, meta
+    except Exception as exc:
+        category, category_meta = fallback_category_for_query(db, current_user, payload, error=str(exc))
+        query_terms, ignored_terms = filter_query_terms(payload.query, stopwords)
+        meta = with_category_meta(default_query_analysis_meta("failed", str(exc)), category_meta)
+        return category, query_terms, ignored_terms, meta
+
+
+def fallback_category_for_query(
+    db: Session,
+    current_user: User,
+    payload: MemorySearchRequest | MemoryContextRequest,
+    *,
+    error: str = "",
+) -> tuple[Any | None, dict[str, Any]]:
+    client_category = str(payload.category or "").strip()
+    if client_category:
+        category = get_active_category(db, current_user.id, client_category)
+        meta = category_meta("client", error=error, reason="combined_ai_failed" if error else "")
+        meta["selected_category"] = client_category
+        meta["category_found"] = category is not None
+        if category is None:
+            meta["ignored_terms"] = [f"{client_category}:分类不存在"]
+        return category, meta
+
+    fallback = get_active_category(db, current_user.id, UNCATEGORIZED_CATEGORY)
+    meta = category_meta("fallback", error=error, reason="combined_ai_failed" if error else "ai_disabled")
+    meta["selected_category"] = UNCATEGORIZED_CATEGORY
+    meta["category_found"] = fallback is not None
+    if fallback is None:
+        meta["ignored_terms"] = [f"{UNCATEGORIZED_CATEGORY}:分类不存在"]
+    return fallback, meta
 
 
 def query_terms_for_search(
@@ -796,6 +890,34 @@ def query_analysis_meta(keyword_source: str, analysis: QueryAnalysis) -> dict[st
     }
 
 
+def combined_query_analysis_meta(keyword_source: str, analysis: MemoryRequestAnalysis) -> dict[str, Any]:
+    total_tokens = token_total(analysis.usage)
+    return {
+        "keyword_source": keyword_source,
+        "analysis_mode": "combined",
+        "intent_summary": analysis.intent_summary,
+        "ai_keywords": analysis.keywords,
+        "negative_keywords": analysis.negative_keywords,
+        "ai_ignored_terms": [],
+        "ai_error": "",
+        "ai_duration_ms": analysis.duration_ms,
+        "ai_usage": analysis.usage,
+        "ai_total_tokens": total_tokens,
+        "ai_request_total_tokens": total_tokens,
+        "category_source": "ai",
+        "selected_category": analysis.category,
+        "category_found": bool(analysis.matched_existing),
+        "category_matched_existing": bool(analysis.matched_existing),
+        "category_reason": analysis.reason,
+        "category_confidence": analysis.confidence,
+        "category_error": "",
+        "category_duration_ms": analysis.duration_ms,
+        "category_usage": {},
+        "category_total_tokens": 0,
+        "ignored_terms": [],
+    }
+
+
 def token_total(usage: dict[str, Any] | None) -> int:
     if not isinstance(usage, dict):
         return 0
@@ -854,6 +976,7 @@ def build_context_response_summary(
         "top_k": top_k,
         "max_chars": max_chars,
         "keyword_source": query_analysis.get("keyword_source", "disabled"),
+        "analysis_mode": query_analysis.get("analysis_mode", ""),
         "category_source": query_analysis.get("category_source", ""),
         "selected_category": query_analysis.get("selected_category", category),
         "category_reason": query_analysis.get("category_reason", ""),
