@@ -119,6 +119,28 @@ class _MemoryDb(_FakeDb):
                 attachments=[],
             ),
         ]
+        self.review_runs = [
+            AiMemoryReviewRun(
+                id=uuid.uuid4(),
+                admin_username="admin",
+                status="completed",
+                source="selection",
+                request_summary={"memory_count": 2},
+                response_summary={
+                    "suggestion_count": 1,
+                    "ai_usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 5,
+                        "total_tokens": 17,
+                        "cached_tokens": 3,
+                    },
+                },
+                prompt_tokens=12,
+                completion_tokens=5,
+                total_tokens=17,
+                created_at="2026-05-30 11:00:00+00:00",
+            )
+        ]
         self.scalars_calls = 0
         self.added = []
         self.committed = False
@@ -135,7 +157,9 @@ class _MemoryDb(_FakeDb):
             return _Rows(self.users)
         if self.scalars_calls == 2:
             return _Rows(self.categories)
-        return _Rows(self.agents)
+        if self.scalars_calls == 3:
+            return _Rows(self.agents)
+        return _Rows(self.review_runs)
 
     def add(self, value) -> None:
         self.added.append(value)
@@ -361,7 +385,13 @@ class _AiReviewApplyAllDb(_FakeDb):
             status="completed",
             source="selection",
             request_summary={"memory_count": 2},
-            response_summary={"suggestion_count": 3},
+            response_summary={
+                "suggestion_count": 3,
+                "ai_usage": {"prompt_tokens": 7, "completion_tokens": 8, "total_tokens": 15, "cached_tokens": 2},
+            },
+            prompt_tokens=7,
+            completion_tokens=8,
+            total_tokens=15,
             created_at="2026-05-30 10:00:00+00:00",
         )
         self.run.suggestions = [self.pending_two, self.ignored, self.pending_one]
@@ -985,6 +1015,11 @@ def test_admin_ai_review_creates_suggestions(monkeypatch) -> None:
     assert suggestion.proposed_json["content"] == "压缩正文"
     assert suggestion.proposed_json["category"] == "偏好"
     assert suggestion.reason == "去掉重复表达。"
+    run = next(iter(db.runs.values()))
+    assert run.prompt_tokens == 10
+    assert run.completion_tokens == 20
+    assert run.total_tokens == 30
+    assert run.response_summary["ai_usage"] == {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
     assert db.committed is True
 
 
@@ -998,6 +1033,10 @@ def test_admin_ai_review_page_shows_apply_all(monkeypatch) -> None:
     assert response.status_code == 200
     assert "全部应用 2 条" in response.text
     assert f"/admin/ai-reviews/{db.run_id}/apply-all" in response.text
+    assert "输入 7 tokens" in response.text
+    assert "输出 8 tokens" in response.text
+    assert "总 15 tokens" in response.text
+    assert "缓存 2 tokens" in response.text
 
 
 def test_admin_can_apply_all_pending_ai_suggestions(monkeypatch) -> None:
@@ -1141,6 +1180,12 @@ def test_admin_memories_page_uses_compact_table(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "memory-table" in response.text
+    assert "最近 AI 整理记录" in response.text
+    assert "查看结果" in response.text
+    assert "输入 12" in response.text
+    assert "输出 5" in response.text
+    assert "总 17" in response.text
+    assert "缓存 3" in response.text
     assert "col-actions" in response.text
     assert "全选" in response.text
     assert 'data-select-all="memory_ids"' in response.text

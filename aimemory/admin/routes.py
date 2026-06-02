@@ -66,7 +66,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260531-0412"
+ADMIN_ASSET_VERSION = "20260602-2015"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -1273,6 +1273,9 @@ def memories_page(
         category_query = category_query.where(MemoryCategory.user_id == selected_user_id)
     categories = db.scalars(category_query).all()
     agents = db.scalars(select(Memory.agent_id).distinct().order_by(Memory.agent_id)).all()
+    recent_ai_review_runs = db.scalars(
+        select(AiMemoryReviewRun).order_by(AiMemoryReviewRun.created_at.desc()).limit(10)
+    ).all()
     return templates.TemplateResponse(
         request,
         "memories.html",
@@ -1282,6 +1285,7 @@ def memories_page(
             users=users,
             categories=categories,
             agents=agents,
+            recent_ai_review_runs=recent_ai_review_runs,
             rows=rows,
             filters={
                 "user_id": str(selected_user_id) if selected_user_id else "",

@@ -199,7 +199,11 @@ def create_review_run(
                 )
             )
         run.status = "completed"
-        run.response_summary = {"suggestion_count": len(suggestions), "ai_total_tokens": usage.get("total_tokens")}
+        run.response_summary = {
+            "suggestion_count": len(suggestions),
+            "ai_total_tokens": usage.get("total_tokens"),
+            "ai_usage": dict(usage),
+        }
         run.completed_at = utcnow()
     except Exception as exc:
         run.status = "failed"
@@ -209,6 +213,7 @@ def create_review_run(
                 "raw_preview": preview_ai_output(result.content),
                 "raw_chars": len(str(result.content or "")),
                 "ai_total_tokens": usage.get("total_tokens"),
+                "ai_usage": dict(usage),
             }
         run.completed_at = utcnow()
     db.add(run)

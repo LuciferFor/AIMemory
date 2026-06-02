@@ -3,6 +3,12 @@
 {% set heading = "AI 整理结果" %}
 {% set subheading = "审核并应用建议" %}
 {% block content %}
+{% set response_summary = run.response_summary or {} %}
+{% set usage = response_summary.get("ai_usage") or {} %}
+{% set prompt_tokens = usage.get("prompt_tokens") or run.prompt_tokens %}
+{% set completion_tokens = usage.get("completion_tokens") or run.completion_tokens %}
+{% set total_tokens = usage.get("total_tokens") or run.total_tokens or response_summary.get("ai_total_tokens") %}
+{% set cached_tokens = usage.get("cached_tokens") %}
 <div class="section-head">
   <a class="button-link" href="/admin/memories">返回记忆</a>
   <a class="button-link" href="/admin/ai-settings">AI 设置</a>
@@ -19,20 +25,23 @@
   <div class="summary-head">
     <span>来源 {{ run.source }}</span>
     <span>记忆 {{ run.request_summary.get("memory_count", 0) }} 条</span>
-    <span>建议 {{ run.response_summary.get("suggestion_count", run.suggestions|length) }} 条</span>
-    {% if run.total_tokens %}<span>Token {{ run.total_tokens }}</span>{% endif %}
+    <span>建议 {{ response_summary.get("suggestion_count", run.suggestions|length) }} 条</span>
+    {% if prompt_tokens %}<span>输入 {{ prompt_tokens }} tokens</span>{% endif %}
+    {% if completion_tokens %}<span>输出 {{ completion_tokens }} tokens</span>{% endif %}
+    {% if total_tokens %}<span>总 {{ total_tokens }} tokens</span>{% endif %}
+    {% if cached_tokens %}<span>缓存 {{ cached_tokens }} tokens</span>{% endif %}
     <span title="{{ full_datetime(run.created_at) }}">{{ compact_datetime(run.created_at) }}</span>
   </div>
   {% if run.error %}
   <div class="notice error">{{ run.error }}</div>
   {% endif %}
-  {% if run.response_summary.get("raw_preview") %}
+  {% if response_summary.get("raw_preview") %}
   <details open>
     <summary>AI 原始返回预览</summary>
-    {% if run.response_summary.get("raw_chars") %}
-    <p class="muted">原始返回约 {{ run.response_summary.get("raw_chars") }} 字，仅显示前 500 字。</p>
+    {% if response_summary.get("raw_chars") %}
+    <p class="muted">原始返回约 {{ response_summary.get("raw_chars") }} 字，仅显示前 500 字。</p>
     {% endif %}
-    <pre>{{ run.response_summary.get("raw_preview") }}</pre>
+    <pre>{{ response_summary.get("raw_preview") }}</pre>
   </details>
   {% endif %}
   {% if run.prompt_preview %}
