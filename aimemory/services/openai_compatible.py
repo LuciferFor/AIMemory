@@ -22,6 +22,38 @@ def normalize_base_url(base_url: str) -> str:
     return str(base_url or "").strip().rstrip("/")
 
 
+def token_usage_summary(usage: dict[str, Any] | None) -> dict[str, int]:
+    if not isinstance(usage, dict):
+        return {}
+
+    prompt_tokens = usage_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion_tokens = usage_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total_tokens = usage_int(usage.get("total_tokens"))
+    if not total_tokens and (prompt_tokens or completion_tokens):
+        total_tokens = prompt_tokens + completion_tokens
+
+    details = usage.get("prompt_tokens_details")
+    cached_tokens = usage_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+
+    summary: dict[str, int] = {}
+    if prompt_tokens:
+        summary["prompt_tokens"] = prompt_tokens
+    if completion_tokens:
+        summary["completion_tokens"] = completion_tokens
+    if total_tokens:
+        summary["total_tokens"] = total_tokens
+    if cached_tokens:
+        summary["cached_tokens"] = cached_tokens
+    return summary
+
+
+def usage_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def chat_completion(
     config: LlmProviderConfig,
     api_key: str,

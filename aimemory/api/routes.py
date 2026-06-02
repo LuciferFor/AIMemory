@@ -48,7 +48,7 @@ from aimemory.services.attachments import AttachmentValidationError
 from aimemory.services.ai_crypto import decrypt_secret
 from aimemory.services.ai_memory_review import get_llm_config
 from aimemory.services.category_analysis import CategoryAnalysis, analyze_memory_category
-from aimemory.services.openai_compatible import chat_completion
+from aimemory.services.openai_compatible import chat_completion, token_usage_summary
 from aimemory.services.query_analysis import QueryAnalysis, analyze_memory_query, effective_terms_from_ai_keywords
 from aimemory.services.text import filter_query_terms, normalize_query
 
@@ -182,6 +182,7 @@ def write_memory(
             "category": category_name,
             "category_source": category_meta.get("category_source"),
             "category_confidence": category_meta.get("category_confidence"),
+            "category_total_tokens": category_meta.get("category_total_tokens"),
             "action": action,
             "memory_id": memory.id,
             "indexing_mode": "text",
@@ -228,6 +229,9 @@ def search_memory(
             "ignored_term_count": len(ignored_terms),
             "keyword_source": query_analysis.get("keyword_source"),
             "ai_duration_ms": query_analysis.get("ai_duration_ms"),
+            "category_total_tokens": query_analysis.get("category_total_tokens"),
+            "ai_total_tokens": query_analysis.get("ai_total_tokens"),
+            "ai_request_total_tokens": query_analysis.get("ai_request_total_tokens"),
             "duration_ms": duration_ms,
         },
     )
@@ -297,6 +301,9 @@ def build_memory_context(
             "ignored_term_count": len(ignored_terms),
             "keyword_source": query_analysis.get("keyword_source"),
             "ai_duration_ms": query_analysis.get("ai_duration_ms"),
+            "category_total_tokens": query_analysis.get("category_total_tokens"),
+            "ai_total_tokens": query_analysis.get("ai_total_tokens"),
+            "ai_request_total_tokens": query_analysis.get("ai_request_total_tokens"),
             "duration_ms": search_duration_ms,
         },
     )
@@ -389,6 +396,7 @@ def extract_memory_from_transcript(
         temperature=0.1,
         timeout_ms=max(int(getattr(config, "timeout_ms", 30000) or 30000), 30000),
     )
+    usage = token_usage_summary(result.usage)
     candidates = normalize_extracted_memory_candidates(result.content, payload.reason, payload.metadata)
     written_items: list[MemoryExtractItem] = []
     for candidate in candidates:
@@ -425,6 +433,9 @@ def extract_memory_from_transcript(
         "transcript_chars": len(payload.transcript),
         "extracted": response.extracted,
         "written": response.written,
+        "ai_usage": usage,
+        "ai_total_tokens": token_total(usage),
+        "ai_request_total_tokens": token_total(usage),
         "items": [item.model_dump() for item in response.items[:20]],
     }
     logger.info(
@@ -437,9 +448,9 @@ def extract_memory_from_transcript(
             "transcript_chars": len(payload.transcript),
             "extracted": response.extracted,
             "written": response.written,
-            "prompt_tokens": result.usage.get("prompt_tokens"),
-            "completion_tokens": result.usage.get("completion_tokens"),
-            "total_tokens": result.usage.get("total_tokens"),
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
         },
     )
     return response
@@ -639,6 +650,8 @@ def category_meta(
         "category_reason": reason or (analysis.reason if analysis else ""),
         "category_error": str(error or "")[:300],
         "category_duration_ms": analysis.duration_ms if analysis else 0.0,
+        "category_usage": analysis.usage if analysis else {},
+        "category_total_tokens": token_total(analysis.usage if analysis else {}),
         "ignored_terms": [],
     }
 
@@ -652,6 +665,10 @@ def with_category_meta(query_analysis: dict[str, Any], category_info: dict[str, 
         "category_confidence": category_info.get("category_confidence", 0.0),
         "category_error": category_info.get("category_error", ""),
         "category_duration_ms": category_info.get("category_duration_ms", 0.0),
+        "category_usage": category_info.get("category_usage", {}),
+        "category_total_tokens": category_info.get("category_total_tokens", 0),
+        "ai_request_total_tokens": token_total(category_info.get("category_usage", {}))
+        + token_total(query_analysis.get("ai_usage", {})),
     }
 
 
@@ -758,6 +775,9 @@ def default_query_analysis_meta(keyword_source: str, error: str = "") -> dict[st
         "ai_ignored_terms": [],
         "ai_error": str(error or "")[:300],
         "ai_duration_ms": 0.0,
+        "ai_usage": {},
+        "ai_total_tokens": 0,
+        "ai_request_total_tokens": 0,
     }
 
 
@@ -770,7 +790,19 @@ def query_analysis_meta(keyword_source: str, analysis: QueryAnalysis) -> dict[st
         "ai_ignored_terms": [],
         "ai_error": "",
         "ai_duration_ms": analysis.duration_ms,
+        "ai_usage": analysis.usage,
+        "ai_total_tokens": token_total(analysis.usage),
+        "ai_request_total_tokens": token_total(analysis.usage),
     }
+
+
+def token_total(usage: dict[str, Any] | None) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    try:
+        return max(0, int(usage.get("total_tokens") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def build_context_text(results: list[Any], max_chars: int) -> str:
@@ -828,12 +860,17 @@ def build_context_response_summary(
         "category_confidence": query_analysis.get("category_confidence", 0.0),
         "category_error": query_analysis.get("category_error", ""),
         "category_duration_ms": query_analysis.get("category_duration_ms", 0.0),
+        "category_usage": query_analysis.get("category_usage", {}),
+        "category_total_tokens": query_analysis.get("category_total_tokens", 0),
         "intent_summary": query_analysis.get("intent_summary", ""),
         "ai_keywords": query_analysis.get("ai_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
         "negative_keywords": query_analysis.get("negative_keywords", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
         "ai_ignored_terms": query_analysis.get("ai_ignored_terms", [])[:REQUEST_LOG_QUERY_TERM_LIMIT],
         "ai_error": query_analysis.get("ai_error", ""),
         "ai_duration_ms": query_analysis.get("ai_duration_ms", 0.0),
+        "ai_usage": query_analysis.get("ai_usage", {}),
+        "ai_total_tokens": query_analysis.get("ai_total_tokens", 0),
+        "ai_request_total_tokens": query_analysis.get("ai_request_total_tokens", 0),
         "query_terms": logged_terms,
         "ignored_terms": logged_ignored_terms,
         "result_count": len(results),
@@ -877,6 +914,9 @@ def build_write_response_summary(
         "category_confidence": category_info.get("category_confidence", 0.0),
         "category_error": category_info.get("category_error", ""),
         "category_duration_ms": category_info.get("category_duration_ms", 0.0),
+        "category_usage": category_info.get("category_usage", {}),
+        "category_total_tokens": category_info.get("category_total_tokens", 0),
+        "ai_request_total_tokens": category_info.get("category_total_tokens", 0),
         "title_preview": preview_text(payload.title, REQUEST_LOG_QUERY_PREVIEW_CHARS),
         "content_preview": preview_text(payload.content, REQUEST_LOG_CONTENT_PREVIEW_CHARS),
         "attachment_count": len(payload.attachments or []),

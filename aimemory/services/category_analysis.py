@@ -1,11 +1,11 @@
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from aimemory.models.llm_provider_config import LlmProviderConfig
 from aimemory.repositories.memory_categories import CategorySummary, normalize_category_name
-from aimemory.services.openai_compatible import chat_completion
+from aimemory.services.openai_compatible import chat_completion, token_usage_summary
 from aimemory.services.query_analysis import strip_json_code_fence
 from aimemory.services.text import normalize_query
 
@@ -23,6 +23,7 @@ class CategoryAnalysis:
     confidence: float = 0.0
     reason: str = ""
     duration_ms: float = 0.0
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 def build_category_analysis_messages(
@@ -87,6 +88,7 @@ def analyze_memory_category(
         confidence=parsed.confidence,
         reason=parsed.reason,
         duration_ms=round((time.perf_counter() - start) * 1000, 2),
+        usage=token_usage_summary(result.usage),
     )
 
 

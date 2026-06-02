@@ -223,6 +223,7 @@ def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> Non
             keywords=["回答偏好", "老婆"],
             negative_keywords=["长篇"],
             duration_ms=8.5,
+            usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
         ),
     )
     monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [result])
@@ -244,6 +245,8 @@ def test_context_response_summary_includes_ai_query_analysis(monkeypatch) -> Non
     assert summary["ai_ignored_terms"] == ["老婆:弱检索词"]
     assert summary["ai_error"] == ""
     assert summary["ai_duration_ms"] == 8.5
+    assert summary["ai_usage"] == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    assert summary["ai_total_tokens"] == 18
     assert summary["query_terms"] == ["回答偏好"]
 
 
@@ -473,6 +476,7 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
             confidence=0.86,
             reason="请求回答偏好",
             duration_ms=9.0,
+            usage={"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
         ),
     )
     monkeypatch.setattr(
@@ -483,6 +487,7 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
             keywords=["苹果"],
             negative_keywords=[],
             duration_ms=12.5,
+            usage={"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17},
         ),
     )
     monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
@@ -503,6 +508,9 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
     assert query_analysis["category_source"] == "ai"
     assert query_analysis["selected_category"] == "偏好"
     assert query_analysis["category_confidence"] == 0.86
+    assert query_analysis["category_total_tokens"] == 28
+    assert query_analysis["ai_total_tokens"] == 17
+    assert query_analysis["ai_request_total_tokens"] == 45
     assert len(calls) == 1
 
 

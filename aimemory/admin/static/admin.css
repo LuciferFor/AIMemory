@@ -790,6 +790,22 @@ th {
   font-weight: 800;
 }
 
+.ai-token-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .business-chip {
   display: inline-flex;
   min-height: 28px;

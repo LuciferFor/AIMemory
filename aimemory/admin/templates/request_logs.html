@@ -83,6 +83,9 @@
         <td>
           <span class="badge {{ 'ready' if log.status_code < 400 else 'pending' if log.status_code < 500 else 'failed' }}">{{ log.status_code }}</span>
           <span class="muted">{{ "%.2f"|format(log.duration_ms) }}ms</span>
+          {% if log.response_summary and log.response_summary.get("ai_request_total_tokens") %}
+          <code class="ai-token-chip" title="本次业务请求触发的 AI 总 token 消耗">AI {{ log.response_summary.get("ai_request_total_tokens") }} tokens</code>
+          {% endif %}
           {% if log.error_type %}<code title="{{ log.error_type }}">{{ log.error_type }}</code>{% endif %}
         </td>
         <td>
@@ -112,6 +115,9 @@
             <div class="summary-head">
               <span>业务 {{ row.business.label }}</span>
               <span>类型 {{ summary_type }}</span>
+              {% if summary.get("ai_request_total_tokens") %}
+              <span>AI 总 tokens {{ summary.get("ai_request_total_tokens") }}</span>
+              {% endif %}
               {% if summary_type == "context" %}
               <span>命中 {{ summary.get("result_count", 0) }}</span>
               <span>上下文 {{ summary.get("context_chars", 0) }} 字</span>
@@ -139,14 +145,31 @@
                 </span>
               </div>
               {% endif %}
+              {% if summary.get("ai_request_total_tokens") %}
+              <div>
+                <span class="summary-label">AI 消耗</span>
+                <span class="term-list">
+                  {% set request_ai_usage = summary.get("ai_usage") or {} %}
+                  <code class="term-chip">总 tokens {{ summary.get("ai_request_total_tokens") }}</code>
+                  {% if not summary.get("category_usage") and request_ai_usage.get("prompt_tokens") %}<code class="term-chip">输入 {{ request_ai_usage.get("prompt_tokens") }}</code>{% endif %}
+                  {% if not summary.get("category_usage") and request_ai_usage.get("completion_tokens") %}<code class="term-chip">输出 {{ request_ai_usage.get("completion_tokens") }}</code>{% endif %}
+                  {% if not summary.get("category_usage") and request_ai_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ request_ai_usage.get("cached_tokens") }}</code>{% endif %}
+                </span>
+              </div>
+              {% endif %}
               {% if summary.get("category_source") or summary.get("selected_category") %}
               <div>
                 <span class="summary-label">AI 选择分类</span>
                 <span class="term-list">
+                  {% set category_usage = summary.get("category_usage") or {} %}
                   {% if summary.get("category_source") %}<code class="term-chip">来源 {{ summary.get("category_source") }}</code>{% endif %}
                   {% if summary.get("selected_category") %}<code class="term-chip hit">{{ summary.get("selected_category") }}</code>{% endif %}
                   {% if summary.get("category_confidence") %}<code class="term-chip">置信 {{ summary.get("category_confidence") }}</code>{% endif %}
                   {% if summary.get("category_duration_ms") %}<code class="term-chip">耗时 {{ summary.get("category_duration_ms") }}ms</code>{% endif %}
+                  {% if summary.get("category_total_tokens") %}<code class="term-chip">tokens {{ summary.get("category_total_tokens") }}</code>{% endif %}
+                  {% if category_usage.get("prompt_tokens") %}<code class="term-chip">输入 {{ category_usage.get("prompt_tokens") }}</code>{% endif %}
+                  {% if category_usage.get("completion_tokens") %}<code class="term-chip">输出 {{ category_usage.get("completion_tokens") }}</code>{% endif %}
+                  {% if category_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ category_usage.get("cached_tokens") }}</code>{% endif %}
                   {% if summary.get("category_reason") %}<code class="term-chip">{{ summary.get("category_reason") }}</code>{% endif %}
                   {% if summary.get("category_error") %}<code class="term-chip ignored">{{ summary.get("category_error") }}</code>{% endif %}
                 </span>
@@ -156,8 +179,13 @@
               <div>
                 <span class="summary-label">AI 理解</span>
                 <span class="term-list">
+                  {% set ai_usage = summary.get("ai_usage") or {} %}
                   <code class="term-chip">来源 {{ summary.get("keyword_source") }}</code>
                   {% if summary.get("ai_duration_ms") %}<code class="term-chip">耗时 {{ summary.get("ai_duration_ms") }}ms</code>{% endif %}
+                  {% if summary.get("ai_total_tokens") %}<code class="term-chip">tokens {{ summary.get("ai_total_tokens") }}</code>{% endif %}
+                  {% if ai_usage.get("prompt_tokens") %}<code class="term-chip">输入 {{ ai_usage.get("prompt_tokens") }}</code>{% endif %}
+                  {% if ai_usage.get("completion_tokens") %}<code class="term-chip">输出 {{ ai_usage.get("completion_tokens") }}</code>{% endif %}
+                  {% if ai_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ ai_usage.get("cached_tokens") }}</code>{% endif %}
                   {% if summary.get("intent_summary") %}<code class="term-chip">{{ summary.get("intent_summary") }}</code>{% endif %}
                   {% if summary.get("ai_error") %}<code class="term-chip ignored">{{ summary.get("ai_error") }}</code>{% endif %}
                 </span>

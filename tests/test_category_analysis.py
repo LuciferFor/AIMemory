@@ -50,7 +50,7 @@ def test_analyze_memory_category_uses_json_output(monkeypatch) -> None:
         captured["kwargs"] = kwargs
         return SimpleNamespace(
             content='{"category":"工作流程","matched_existing":true,"confidence":0.8,"reason":"部署流程"}',
-            usage={},
+            usage={"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18},
         )
 
     monkeypatch.setattr(ca, "chat_completion", fake_chat_completion)
@@ -69,6 +69,7 @@ def test_analyze_memory_category_uses_json_output(monkeypatch) -> None:
     )
 
     assert result.category == "工作流程"
+    assert result.usage == {"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18}
     assert captured["api_key"] == "sk-test"
     assert captured["kwargs"]["response_format"] == {"type": "json_object"}
     assert captured["kwargs"]["temperature"] == 0.0

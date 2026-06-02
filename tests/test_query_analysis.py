@@ -54,7 +54,7 @@ def test_analyze_memory_query_uses_small_overrides(monkeypatch) -> None:
         captured["kwargs"] = kwargs
         return SimpleNamespace(
             content='{"intent_summary":"生成兔女郎图片","keywords":["黑丝"],"negative_keywords":[]}',
-            usage={},
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         )
 
     monkeypatch.setattr(qa, "chat_completion", fake_chat_completion)
@@ -68,6 +68,7 @@ def test_analyze_memory_query_uses_small_overrides(monkeypatch) -> None:
 
     assert result.intent_summary == "生成兔女郎图片"
     assert result.keywords == ["黑丝"]
+    assert result.usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
     assert captured["api_key"] == "sk-test"
     assert captured["kwargs"]["response_format"] == {"type": "json_object"}
     assert captured["kwargs"]["max_tokens"] == 256

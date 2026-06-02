@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aimemory.models.llm_provider_config import LlmProviderConfig
-from aimemory.services.openai_compatible import chat_completion
+from aimemory.services.openai_compatible import chat_completion, token_usage_summary
 from aimemory.services.text import ignored_term_reason, normalize_query
 
 QUERY_ANALYSIS_WEAK_TERMS = {
@@ -39,6 +39,7 @@ class QueryAnalysis:
     keywords: list[str] = field(default_factory=list)
     negative_keywords: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 def build_query_analysis_messages(query: str, category: str, agent_id: str) -> list[dict[str, str]]:
@@ -94,6 +95,7 @@ def analyze_memory_query(
         keywords=parsed.keywords,
         negative_keywords=parsed.negative_keywords,
         duration_ms=round((time.perf_counter() - start) * 1000, 2),
+        usage=token_usage_summary(result.usage),
     )
 
 
