@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, defer
@@ -54,6 +54,7 @@ class SearchResult:
 
 
 MIN_SEARCH_SCORE = 0.12
+CONTENT_FALLBACK_MIN_SEARCH_SCORE = 0.18
 HIGH_FREQUENCY_ABSOLUTE_MATCHES = 8
 HIGH_FREQUENCY_RATIO = 0.30
 HIGH_FREQUENCY_MIN_MATCHES = 3
@@ -323,6 +324,40 @@ def search_memories(
     return [replace(result, attachments=attachments_by_memory.get(result.memory_id, [])) for result in results]
 
 
+def search_memories_across_categories(
+    db: Session,
+    user_id: uuid.UUID,
+    payload: MemorySearchRequest,
+    normalized_query: str,
+    query_terms: list[str],
+    *,
+    field: Literal["title", "content"],
+    min_matched_terms: int = 1,
+    min_score: float | None = None,
+) -> list[SearchResult]:
+    if not query_terms:
+        return []
+    score_floor = min_score if min_score is not None else MIN_SEARCH_SCORE
+    params: dict[str, Any] = {
+        "user_id": user_id,
+        "agent_id": payload.agent_id,
+        "query": normalized_query,
+        "terms": query_terms,
+        "like_query": f"%{normalized_query}%",
+        "top_k": payload.top_k,
+        "candidate_limit": max(payload.top_k * 8, 50),
+        "min_matched_terms": max(1, min_matched_terms),
+        "min_score": score_floor,
+    }
+    where_sql = _build_common_where(payload, params, include_category=False)
+    sql = _field_fallback_search_sql(where_sql, field)
+    rows = db.execute(text(sql), params).mappings().all()
+    results = [_row_to_result(row) for row in rows]
+    results = [result for result in results if result.matched_terms and result.score >= score_floor]
+    attachments_by_memory = _attachments_for_memories(db, [result.memory_id for result in results])
+    return [replace(result, attachments=attachments_by_memory.get(result.memory_id, [])) for result in results]
+
+
 def filter_high_frequency_terms(
     db: Session,
     user_id: uuid.UUID,
@@ -397,13 +432,14 @@ FROM term_counts
     return effective_terms, ignored_terms
 
 
-def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) -> str:
+def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any], *, include_category: bool = True) -> str:
     clauses = [
         "m.user_id = :user_id",
-        "m.category_id = :category_id",
         "m.agent_id = :agent_id",
         "m.deleted_at IS NULL",
     ]
+    if include_category:
+        clauses.insert(1, "m.category_id = :category_id")
     if payload.metadata_filter:
         clauses.append('m."metadata" @> CAST(:metadata_filter AS jsonb)')
         params["metadata_filter"] = json.dumps(payload.metadata_filter)
@@ -414,6 +450,112 @@ def _build_common_where(payload: MemorySearchRequest, params: dict[str, Any]) ->
         clauses.append("COALESCE(m.occurred_at, m.created_at) <= :until")
         params["until"] = payload.until
     return " AND ".join(clauses)
+
+
+def _field_fallback_search_sql(where_sql: str, field: Literal["title", "content"]) -> str:
+    field_expr = "m.title" if field == "title" else "m.content"
+    field_label = "标题" if field == "title" else "正文"
+    title_score_expr = "COALESCE(tm.matched_term_count / NULLIF(ts.term_count, 0.0), 0.0)" if field == "title" else "0.0"
+    content_score_expr = "COALESCE(tm.matched_term_count / NULLIF(ts.term_count, 0.0), 0.0)" if field == "content" else "0.0"
+    return f"""
+WITH query_terms AS (
+    SELECT term
+    FROM unnest(CAST(:terms AS text[])) AS query_term(term)
+    WHERE length(term) > 0
+),
+term_stats AS (
+    SELECT GREATEST(count(*), 1)::float AS term_count FROM query_terms
+),
+term_matches AS (
+    SELECT
+        m.id,
+        COALESCE(
+            array_agg(DISTINCT qt.term ORDER BY qt.term) FILTER (
+                WHERE {field_expr} ILIKE ('%' || qt.term || '%')
+            ),
+            ARRAY[]::text[]
+        ) AS matched_terms,
+        count(DISTINCT qt.term) FILTER (
+            WHERE {field_expr} ILIKE ('%' || qt.term || '%')
+        )::float AS matched_term_count
+    FROM memories m
+    CROSS JOIN query_terms qt
+    WHERE {where_sql}
+    GROUP BY m.id
+),
+text_candidates AS (
+    SELECT
+        m.id,
+        COALESCE(ts_rank_cd(to_tsvector('simple', {field_expr}), plainto_tsquery('simple', :query)), 0.0) AS keyword_score,
+        COALESCE(similarity({field_expr}, :query), 0.0) AS fuzzy_score,
+        CASE WHEN {field_expr} ILIKE :like_query THEN 1.0 ELSE 0.0 END AS exact_score,
+        {title_score_expr} AS title_score,
+        COALESCE(tm.matched_term_count / NULLIF(ts.term_count, 0.0), 0.0) AS term_score,
+        {content_score_expr} AS content_score,
+        0.0 AS metadata_score,
+        CASE
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '30 days' THEN 1.0
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '180 days' THEN 0.5
+            WHEN COALESCE(m.occurred_at, m.updated_at, m.created_at) >= now() - interval '365 days' THEN 0.25
+            ELSE 0.0
+        END AS recency_score,
+        tm.matched_terms,
+        ARRAY['{field_label}'::text] AS matched_fields
+    FROM memories m
+    CROSS JOIN term_stats ts
+    JOIN term_matches tm ON tm.id = m.id
+    WHERE {where_sql}
+      AND tm.matched_term_count >= :min_matched_terms
+    ORDER BY title_score DESC, content_score DESC, term_score DESC, keyword_score DESC, m.updated_at DESC
+    LIMIT :candidate_limit
+),
+scored AS (
+    SELECT
+        m.id AS memory_id,
+        m.external_id,
+        c.name AS category,
+        m.title,
+        m.content,
+        m."metadata" AS metadata,
+        m.created_at,
+        m.updated_at,
+        'disabled' AS embedding_status,
+        0.0 AS semantic_score,
+        COALESCE(tc.keyword_score, 0.0) AS keyword_score,
+        COALESCE(tc.fuzzy_score, 0.0) AS fuzzy_score,
+        COALESCE(tc.exact_score, 0.0) AS exact_score,
+        COALESCE(tc.title_score, 0.0) AS title_score,
+        COALESCE(tc.term_score, 0.0) AS term_score,
+        COALESCE(tc.content_score, 0.0) AS content_score,
+        COALESCE(tc.metadata_score, 0.0) AS metadata_score,
+        COALESCE(tc.recency_score, 0.0) AS recency_score,
+        tc.matched_terms,
+        tc.matched_fields
+    FROM memories m
+    JOIN memory_categories c ON c.id = m.category_id
+    JOIN text_candidates tc ON tc.id = m.id
+),
+weighted AS (
+    SELECT
+    *,
+    LEAST(
+        1.0,
+        0.24 * LEAST(GREATEST(title_score, 0.0), 1.0)
+        + 0.24 * LEAST(GREATEST(term_score, 0.0), 1.0)
+        + 0.18 * LEAST(GREATEST(content_score, 0.0), 1.0)
+        + 0.08 * LEAST(GREATEST(exact_score, 0.0), 1.0)
+        + 0.05 * LEAST(GREATEST(keyword_score, 0.0), 1.0)
+        + 0.01 * LEAST(GREATEST(fuzzy_score, 0.0), 1.0)
+        + 0.02 * LEAST(GREATEST(recency_score, 0.0), 1.0)
+    ) AS score
+    FROM scored
+)
+SELECT *
+FROM weighted
+WHERE score >= :min_score
+ORDER BY score DESC, updated_at DESC
+LIMIT :top_k
+"""
 
 
 def _text_search_sql(where_sql: str) -> str:

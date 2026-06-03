@@ -17,9 +17,11 @@ from aimemory.models.user import User
 from aimemory.repositories.memory_categories import UNCATEGORIZED_CATEGORY, get_active_category, list_category_summaries
 from aimemory.repositories.memory_agents import ResolvedMemoryIdentity, resolve_memory_identity
 from aimemory.repositories.memories import (
+    CONTENT_FALLBACK_MIN_SEARCH_SCORE,
     SearchAttachment,
     filter_high_frequency_terms,
     get_attachment_for_user,
+    search_memories_across_categories,
     search_memories,
     soft_delete_memory,
     upsert_memory,
@@ -265,6 +267,20 @@ def search_memory(
         db,
         current_user,
         payload,
+    )
+    request.state.request_log_response_summary = build_context_response_summary(
+        identity,
+        payload.category or "",
+        category_found,
+        payload.query,
+        payload.top_k,
+        query_terms,
+        ignored_terms,
+        query_analysis,
+        results,
+        "",
+        0,
+        summary_type="search",
     )
     logger.info(
         "memory.search",
@@ -856,8 +872,51 @@ def _search_results(
     default_min_matched_terms = 1 if len(query_terms) == 1 else 2
     search_kwargs = {"min_matched_terms": min_matched_terms} if min_matched_terms != default_min_matched_terms else {}
     results = search_memories(db, current_user.id, category.id, payload, normalized_query, query_terms, **search_kwargs)
+    query_analysis["search_stage"] = "category"
+    query_analysis["fallback_used"] = False
+    query_analysis["fallback_stage"] = ""
+    query_analysis["category_result_count"] = len(results)
+    query_analysis["title_fallback_count"] = 0
+    query_analysis["content_fallback_count"] = 0
+    query_analysis["selected_category_for_search"] = category.name
     if not results:
-        query_analysis["no_result_reason"] = "分类内没有匹配记忆或分数低于阈值"
+        title_results = search_memories_across_categories(
+            db,
+            current_user.id,
+            payload,
+            normalized_query,
+            query_terms,
+            field="title",
+            min_matched_terms=1,
+        )
+        query_analysis["title_fallback_count"] = len(title_results)
+        if title_results:
+            results = title_results
+            query_analysis["search_stage"] = "fallback_title"
+            query_analysis["fallback_used"] = True
+            query_analysis["fallback_stage"] = "跨分类标题"
+            query_analysis["no_result_reason"] = ""
+        else:
+            content_results = search_memories_across_categories(
+                db,
+                current_user.id,
+                payload,
+                normalized_query,
+                query_terms,
+                field="content",
+                min_matched_terms=min_matched_terms,
+                min_score=CONTENT_FALLBACK_MIN_SEARCH_SCORE,
+            )
+            query_analysis["content_fallback_count"] = len(content_results)
+            if content_results:
+                results = content_results
+                query_analysis["search_stage"] = "fallback_content"
+                query_analysis["fallback_used"] = True
+                query_analysis["fallback_stage"] = "跨分类正文"
+                query_analysis["no_result_reason"] = ""
+            else:
+                query_analysis["search_stage"] = "none"
+                query_analysis["no_result_reason"] = "分类内没有匹配记忆，跨分类标题/正文也没有达到阈值"
     return results, False, round((time.perf_counter() - start) * 1000, 2), query_terms, ignored_terms, True, query_analysis
 
 
@@ -1077,11 +1136,12 @@ def build_context_response_summary(
     results: list[Any],
     context_text: str,
     max_chars: int,
+    summary_type: str = "context",
 ) -> dict[str, Any]:
     logged_terms = query_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
     logged_ignored_terms = ignored_terms[:REQUEST_LOG_QUERY_TERM_LIMIT]
     return {
-        "type": "context",
+        "type": summary_type,
         "agent_id": identity.agent_id,
         "agent_name": identity.agent_name,
         "device_id": identity.device_id,
@@ -1115,16 +1175,30 @@ def build_context_response_summary(
         "query_terms": logged_terms,
         "ignored_terms": logged_ignored_terms,
         "min_matched_terms": query_analysis.get("min_matched_terms", 0),
+        "search_stage": query_analysis.get("search_stage", ""),
+        "fallback_used": bool(query_analysis.get("fallback_used", False)),
+        "fallback_stage": query_analysis.get("fallback_stage", ""),
+        "category_result_count": query_analysis.get("category_result_count", 0),
+        "title_fallback_count": query_analysis.get("title_fallback_count", 0),
+        "content_fallback_count": query_analysis.get("content_fallback_count", 0),
+        "selected_category_for_search": query_analysis.get("selected_category_for_search", ""),
         "no_result_reason": query_analysis.get("no_result_reason", ""),
         "result_count": len(results),
-        "context_chars": len(context_text),
-        "truncated": bool(context_text) and len(context_text) >= max_chars,
-        "context_text_preview": preview_multiline_text(context_text, REQUEST_LOG_CONTEXT_PREVIEW_CHARS),
-        "context_text_preview_truncated": len(str(context_text or "").strip()) > REQUEST_LOG_CONTEXT_PREVIEW_CHARS,
+        "context_chars": len(context_text) if summary_type == "context" else 0,
+        "truncated": summary_type == "context" and bool(context_text) and len(context_text) >= max_chars,
+        "context_text_preview": (
+            preview_multiline_text(context_text, REQUEST_LOG_CONTEXT_PREVIEW_CHARS)
+            if summary_type == "context"
+            else None
+        ),
+        "context_text_preview_truncated": (
+            len(str(context_text or "").strip()) > REQUEST_LOG_CONTEXT_PREVIEW_CHARS if summary_type == "context" else False
+        ),
         "items": [
             {
                 "memory_id": str(result.memory_id),
                 "external_id": result.external_id,
+                "category": getattr(result, "category", ""),
                 "title": result.title,
                 "score": result.score,
                 "score_parts": getattr(result, "score_parts", {}),

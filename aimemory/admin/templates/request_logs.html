@@ -124,8 +124,10 @@
               {% if summary.get("ai_request_total_tokens") %}
               <span>AI 总 tokens {{ summary.get("ai_request_total_tokens") }}</span>
               {% endif %}
-              {% if summary_type == "context" %}
+              {% if summary_type in ["context", "search"] %}
               <span>命中 {{ summary.get("result_count", 0) }}</span>
+              {% endif %}
+              {% if summary_type == "context" %}
               <span>上下文 {{ summary.get("context_chars", 0) }} 字</span>
               <span>{{ "已截断" if summary.get("truncated") else "未截断" }}</span>
               {% elif summary_type == "extract" %}
@@ -285,6 +287,25 @@
                   {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") %}<span class="muted">未记录</span>{% endif %}
                 </span>
               </div>
+              {% if summary_type in ["context", "search"] %}
+              <div>
+                <span class="summary-label">检索链路</span>
+                <span class="term-list">
+                  <code class="term-chip {{ 'hit' if summary.get('category_result_count', 0) else 'ignored' }}">
+                    分类内 {{ summary.get("selected_category_for_search") or summary.get("selected_category") or summary.get("category") or "-" }} / {{ summary.get("category_result_count", 0) }}
+                  </code>
+                  <code class="term-chip {{ 'hit' if summary.get('title_fallback_count', 0) else '' }}">
+                    跨分类标题 {{ "未执行" if summary.get("category_result_count", 0) else "命中 " ~ summary.get("title_fallback_count", 0) }}
+                  </code>
+                  <code class="term-chip {{ 'hit' if summary.get('content_fallback_count', 0) else '' }}">
+                    跨分类正文 {{ "未执行" if summary.get("category_result_count", 0) or summary.get("title_fallback_count", 0) else "命中 " ~ summary.get("content_fallback_count", 0) }}
+                  </code>
+                  {% if summary.get("fallback_used") %}
+                  <code class="term-chip hit">已使用 {{ summary.get("fallback_stage") }}</code>
+                  {% endif %}
+                </span>
+              </div>
+              {% endif %}
               <div>
                 <span class="summary-label">有效关键词</span>
                 <span class="term-list">
@@ -338,7 +359,7 @@
                   {% if item.get("category") %}<span class="muted">分类 {{ item.get("category") }}</span>{% endif %}
                   {% if item.get("action") %}<span class="badge ready">{{ item.get("action") }}</span>{% endif %}
                 </header>
-                {% if summary_type == "context" %}
+                {% if summary_type in ["context", "search"] %}
                 <div class="matched-terms">
                   <span class="summary-label">命中关键词</span>
                   <span class="term-list">

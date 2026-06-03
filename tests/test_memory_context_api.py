@@ -574,6 +574,109 @@ def test_search_results_filters_high_frequency_terms(monkeypatch) -> None:
     assert calls[0][5] == ["苹果"]
 
 
+def test_search_results_uses_cross_category_title_fallback(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    fallback_result = SearchResult(
+        memory_id=uuid4(),
+        external_id="relation-memory",
+        category="其它",
+        title="用户关系：鸦羽与月见绫音",
+        content="月见绫音与绯夜存在角色关系。",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.49,
+        score_parts={"semantic": 0.0, "title": 1.0, "term": 1.0},
+        embedding_status="disabled",
+        matched_terms=["绯夜"],
+        matched_fields=["标题"],
+    )
+    fallback_calls = []
+
+    monkeypatch.setattr(routes, "query_terms_for_search", lambda *args, **kwargs: (["绯夜"], [], routes.default_query_analysis_meta("disabled")))
+    monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (args[4], []))
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [])
+
+    def _fake_fallback(*args, **kwargs):
+        fallback_calls.append(kwargs)
+        return [fallback_result] if kwargs.get("field") == "title" else []
+
+    monkeypatch.setattr(routes, "search_memories_across_categories", _fake_fallback)
+    payload = MemorySearchRequest(agent_id="assistant", category="娱乐偏好", query="老婆你记得绯夜嘛")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == [fallback_result]
+    assert used_vector is False
+    assert category_found is True
+    assert duration_ms >= 0
+    assert query_terms == ["绯夜"]
+    assert ignored_terms == []
+    assert fallback_calls == [{"field": "title", "min_matched_terms": 1}]
+    assert query_analysis["fallback_used"] is True
+    assert query_analysis["fallback_stage"] == "跨分类标题"
+    assert query_analysis["category_result_count"] == 0
+    assert query_analysis["title_fallback_count"] == 1
+    assert query_analysis["content_fallback_count"] == 0
+
+
+def test_search_results_uses_cross_category_content_fallback_after_title_miss(monkeypatch) -> None:
+    now = datetime.now(UTC)
+    fallback_result = SearchResult(
+        memory_id=uuid4(),
+        external_id="relation-memory",
+        category="其它",
+        title="用户关系：鸦羽与月见绫音",
+        content="月见绫音与绯夜存在角色关系。",
+        metadata={},
+        created_at=now,
+        updated_at=now,
+        score=0.31,
+        score_parts={"semantic": 0.0, "content": 1.0, "term": 1.0},
+        embedding_status="disabled",
+        matched_terms=["绯夜"],
+        matched_fields=["正文"],
+    )
+    fallback_calls = []
+
+    monkeypatch.setattr(routes, "query_terms_for_search", lambda *args, **kwargs: (["绯夜"], [], routes.default_query_analysis_meta("disabled")))
+    monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (args[4], []))
+    monkeypatch.setattr(routes, "search_memories", lambda *args, **kwargs: [])
+
+    def _fake_fallback(*args, **kwargs):
+        fallback_calls.append(kwargs)
+        return [fallback_result] if kwargs.get("field") == "content" else []
+
+    monkeypatch.setattr(routes, "search_memories_across_categories", _fake_fallback)
+    payload = MemorySearchRequest(agent_id="assistant", category="娱乐偏好", query="老婆你记得绯夜嘛")
+
+    results, used_vector, duration_ms, query_terms, ignored_terms, category_found, query_analysis = routes._search_results(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        payload,
+    )
+
+    assert results == [fallback_result]
+    assert used_vector is False
+    assert category_found is True
+    assert duration_ms >= 0
+    assert query_terms == ["绯夜"]
+    assert ignored_terms == []
+    assert fallback_calls == [
+        {"field": "title", "min_matched_terms": 1},
+        {"field": "content", "min_matched_terms": 1, "min_score": 0.18},
+    ]
+    assert query_analysis["fallback_used"] is True
+    assert query_analysis["fallback_stage"] == "跨分类正文"
+    assert query_analysis["category_result_count"] == 0
+    assert query_analysis["title_fallback_count"] == 0
+    assert query_analysis["content_fallback_count"] == 1
+
+
 def test_search_results_uses_ai_query_analysis_when_available(monkeypatch) -> None:
     calls = []
 
