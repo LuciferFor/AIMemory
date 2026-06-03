@@ -4106,3 +4106,419 @@ html[data-theme="dark"] .ai-sql-table-wrap {
   background: #10161d;
   color: var(--text);
 }
+
+/* AI chat uses the night workspace even if the rest of the admin is in light mode. */
+body:has(.ai-chat-page) {
+  --bg: #0b0f14;
+  --surface: #11161d;
+  --surface-strong: #151b24;
+  --panel: #151b24;
+  --line: #2d3542;
+  --line-soft: #1f2937;
+  --text: #e6edf6;
+  --muted: #95a3b8;
+  --primary: #4f8cff;
+  --primary-soft: #1e2f4f;
+  --accent-strong: #8ab4ff;
+  --danger: #ff7d7d;
+  --ok: #66e08b;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body:has(.ai-chat-page) .shell,
+body:has(.ai-chat-page) .main,
+body:has(.ai-chat-page) .sidebar {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body:has(.ai-chat-page) .sidebar {
+  border-color: var(--line);
+  background: #0f141b;
+}
+
+body:has(.ai-chat-page) .brand,
+body:has(.ai-chat-page) .nav a,
+body:has(.ai-chat-page) .topbar h1,
+body:has(.ai-chat-page) .topbar p {
+  color: var(--text);
+}
+
+body:has(.ai-chat-page) .nav a.active,
+body:has(.ai-chat-page) .nav a:hover,
+body:has(.ai-chat-page) .theme-toggle,
+body:has(.ai-chat-page) .logout button,
+body:has(.ai-chat-page) .user-chip {
+  border-color: #344052;
+  background: #172234;
+  color: var(--accent-strong);
+}
+
+body:has(.ai-chat-page) .topbar {
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+body:has(.ai-chat-page) .ai-chat-page {
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  height: calc(100vh - 118px);
+  min-height: 560px;
+  color: var(--text);
+}
+
+body:has(.ai-chat-page) .ai-chat-page .ai-thread-sidebar,
+body:has(.ai-chat-page) .ai-chat-page .ai-chat-workspace {
+  border-color: #2d3542;
+  background: #11161d;
+  box-shadow: none;
+}
+
+body:has(.ai-chat-page) .ai-chat-page .ai-chat-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+body:has(.ai-chat-page) .ai-chat-page .ai-chat-start {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: stretch;
+  place-items: stretch;
+  gap: 18px;
+  overflow-y: auto;
+  padding: 28px;
+}
+
+body:has(.ai-chat-page) .ai-chat-page .ai-chat-start.is-chatting {
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: stretch;
+  place-items: stretch;
+}
+
+body:has(.ai-chat-page) .ai-chat-start .ai-chat-hero {
+  align-self: center;
+  justify-self: center;
+  max-width: 720px;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+
+body:has(.ai-chat-page) .ai-chat-hero h1,
+body:has(.ai-chat-page) .ai-chat-hero h2,
+body:has(.ai-chat-page) .ai-chat-workspace-head h2,
+body:has(.ai-chat-page) .ai-thread-head strong,
+body:has(.ai-chat-page) .ai-thread-item,
+body:has(.ai-chat-page) .ai-thread-item span,
+body:has(.ai-chat-page) .ai-message-card header strong,
+body:has(.ai-chat-page) .ai-message-text {
+  color: var(--text);
+}
+
+body:has(.ai-chat-page) .ai-chat-hero h2 {
+  font-size: 20px;
+}
+
+body:has(.ai-chat-page) .ai-chat-hero p,
+body:has(.ai-chat-page) .ai-thread-head span,
+body:has(.ai-chat-page) .ai-thread-period,
+body:has(.ai-chat-page) .ai-thread-item small,
+body:has(.ai-chat-page) .ai-empty-sidebar,
+body:has(.ai-chat-page) .ai-chat-workspace-head p {
+  color: var(--muted);
+}
+
+body:has(.ai-chat-page) .ai-chat-hero p {
+  max-width: 560px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+body:has(.ai-chat-page) .ai-hero-mark,
+body:has(.ai-chat-page) .ai-message-avatar {
+  border-color: #31415c;
+  background: #182235;
+  color: var(--accent-strong);
+  box-shadow: none;
+}
+
+body:has(.ai-chat-page) .ai-compose {
+  width: min(820px, 100%);
+  border: 1px solid #334052;
+  border-radius: 20px;
+  background: #151b24;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  padding: 12px 14px;
+}
+
+body:has(.ai-chat-page) .ai-compose-empty {
+  align-self: end;
+  justify-self: center;
+  margin: 0 auto;
+}
+
+body:has(.ai-chat-page) .ai-compose-thread {
+  margin: 0 auto 18px;
+}
+
+body:has(.ai-chat-page) .ai-compose textarea {
+  min-height: 76px;
+  border: 1px solid #2d3542;
+  border-radius: 14px;
+  background: #0f141b;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+body:has(.ai-chat-page) .ai-compose textarea::placeholder {
+  color: #7f8b9d;
+}
+
+body:has(.ai-chat-page) .ai-compose-chips span,
+body:has(.ai-chat-page) .ai-message-card code,
+body:has(.ai-chat-page) .ai-thread-search,
+body:has(.ai-chat-page) .ai-thread-icon-link,
+body:has(.ai-chat-page) .ai-new-chat-button {
+  border-color: #344052;
+  background: #10161d;
+  color: #c8d7ea;
+}
+
+body:has(.ai-chat-page) .ai-new-chat-button:hover,
+body:has(.ai-chat-page) .ai-thread-row:hover,
+body:has(.ai-chat-page) .ai-thread-row.active {
+  border-color: #344052;
+  background: #151b24;
+  color: var(--text);
+  box-shadow: none;
+}
+
+body:has(.ai-chat-page) .ai-send-button {
+  border: 1px solid #5b8ff1;
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+body:has(.ai-chat-page) .ai-send-button:hover {
+  background: #6aa7ff;
+}
+
+body:has(.ai-chat-page) .ai-send-button:disabled {
+  border-color: #303946;
+  background: #263141;
+  color: #7f8b9d;
+}
+
+body:has(.ai-chat-page) .ai-thread-delete {
+  border-color: #5f2b2d;
+  background: #261719;
+  color: var(--danger);
+}
+
+body:has(.ai-chat-page) .ai-chat-workspace-head {
+  border-color: var(--line);
+}
+
+body:has(.ai-chat-page) .ai-message-card,
+body:has(.ai-chat-page) .ai-message-row.user .ai-message-card,
+body:has(.ai-chat-page) .ai-message-card.loading {
+  border-color: #344052;
+  background: #151b24;
+  color: var(--text);
+  box-shadow: none;
+}
+
+body:has(.ai-chat-page) .ai-message-card.failed {
+  border-color: #7f3234;
+  background: #311a1c;
+}
+
+body:has(.ai-chat-page) .ai-sql-card,
+body:has(.ai-chat-page) .ai-sql-table-wrap {
+  border-color: #344052;
+  background: #10161d;
+  color: var(--text);
+}
+
+/* AI review result page dark cards. */
+html[data-theme="dark"] .ai-suggestion-list.panel {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .ai-suggestion-card {
+  border-color: #344052;
+  background: #151b24;
+  color: var(--text);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .ai-suggestion-card > p,
+html[data-theme="dark"] .ai-suggestion-card strong,
+html[data-theme="dark"] .ai-review-grid h3,
+html[data-theme="dark"] .ai-review-grid p,
+html[data-theme="dark"] .ai-review-grid summary,
+html[data-theme="dark"] .ai-review-grid code {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .ai-review-grid > section,
+html[data-theme="dark"] .ai-review-grid details {
+  border-color: #344052;
+  background: #10161d;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .ai-review-grid details {
+  border: 1px solid #344052;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+html[data-theme="dark"] .ai-review-grid pre,
+html[data-theme="dark"] .ai-suggestion-card pre {
+  border-color: #344052;
+  background: #0f141b;
+  color: #dbe7f6;
+}
+
+html[data-theme="dark"] .ai-suggestion-card .muted,
+html[data-theme="dark"] .ai-review-grid .muted {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .ai-suggestion-card .action-button {
+  border-color: #344052;
+  background: #10161d;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .ai-suggestion-card .action-button.detail {
+  border-color: #4f8cff;
+  background: #172234;
+  color: var(--accent-strong);
+}
+
+/* Final dark hover guard: prevent light button hover states from leaking in. */
+html[data-theme="dark"] .button-link:hover,
+html[data-theme="dark"] .action-button:hover,
+html[data-theme="dark"] button.secondary:hover,
+html[data-theme="dark"] .secondary:hover {
+  border-color: #4a5a70;
+  background: #1b2533;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .action-button.detail,
+html[data-theme="dark"] a.action-button.detail {
+  border-color: #4f8cff;
+  background: #172234;
+  color: var(--accent-strong);
+}
+
+html[data-theme="dark"] .action-button.detail:hover,
+html[data-theme="dark"] a.action-button.detail:hover {
+  border-color: #6aa7ff;
+  background: #1d3152;
+  color: #dbeafe;
+}
+
+html[data-theme="dark"] .action-button.danger,
+html[data-theme="dark"] button.danger,
+html[data-theme="dark"] .danger {
+  border-color: #7f3234;
+  background: #261719;
+  color: var(--danger);
+}
+
+html[data-theme="dark"] .action-button.danger:hover,
+html[data-theme="dark"] button.danger:hover,
+html[data-theme="dark"] .danger:hover {
+  border-color: #b64a4d;
+  background: #3a1d21;
+  color: #ffb4b4;
+}
+
+html[data-theme="dark"] button.primary:hover,
+html[data-theme="dark"] .primary:hover {
+  border-color: #6aa7ff;
+  background: #3f7dec;
+  color: #ffffff;
+}
+
+/* Memory list selection controls: keep checkbox labels away from edges. */
+.memory-table .col-select {
+  width: 210px;
+}
+
+.memory-table th:first-child,
+.memory-table td:first-child {
+  min-width: 210px;
+}
+
+.select-header-controls {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  overflow: visible;
+}
+
+.select-all-control {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: inline-grid;
+  grid-template-columns: 20px max-content;
+  align-items: center;
+  justify-content: center;
+  column-gap: 10px;
+  min-width: 88px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.select-all-control input,
+.select-cell input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.select-all-control span {
+  display: block;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Memory detail page: keep side information cards dark too. */
+html[data-theme="dark"] .detail-side .info-panel,
+html[data-theme="dark"] .detail-attachment-card {
+  border-color: #344052;
+  background: #151b24;
+  color: var(--text);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .detail-side .info-panel h2,
+html[data-theme="dark"] .detail-side .detail-list dd,
+html[data-theme="dark"] .detail-side .detail-list dd code,
+html[data-theme="dark"] .detail-attachment-card figcaption strong {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .detail-side .detail-list dt,
+html[data-theme="dark"] .detail-attachment-card figcaption {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .detail-attachment-card img {
+  background: #0f141b;
+}
