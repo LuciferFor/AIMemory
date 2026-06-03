@@ -76,7 +76,7 @@ from aimemory.services.text import build_search_text, is_numeric_term
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 ADMIN_TIMEZONE = ZoneInfo("Asia/Shanghai")
-ADMIN_ASSET_VERSION = "20260602-2258"
+ADMIN_ASSET_VERSION = "20260604-request-logs-jump"
 
 STATUS_LABELS = {
     "active": "启用",
@@ -1630,7 +1630,7 @@ def request_logs_page(
     user_id: str = "",
     since: str = "",
     until: str = "",
-    limit: int = Query(default=100, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> Response:
     session = require_admin_context(request)
@@ -1650,40 +1650,84 @@ def request_logs_page(
             return redirect_to("/admin/request-logs", error="状态码筛选参数无效。")
 
     normalized_method = method.strip().upper()
-    query = select(RequestLog, User.name.label("user_name")).outerjoin(User, User.id == RequestLog.user_id).order_by(RequestLog.created_at.desc())
-    if source:
-        query = query.where(RequestLog.source == source)
-    if normalized_method:
-        query = query.where(RequestLog.method == normalized_method)
-    if parsed_status_code is not None:
-        query = query.where(RequestLog.status_code == parsed_status_code)
-    if selected_user_id:
-        query = query.where(RequestLog.user_id == selected_user_id)
-    if q.strip():
-        like = f"%{q.strip()}%"
-        query = query.where(
-            or_(
-                RequestLog.path.ilike(like),
-                RequestLog.route_path.ilike(like),
-                RequestLog.request_id.ilike(like),
-                RequestLog.agent_id.ilike(like),
-                RequestLog.agent_name.ilike(like),
-                RequestLog.device_id.ilike(like),
-                RequestLog.device_name.ilike(like),
-            )
-        )
+    q_value = q.strip()
     since_dt = parse_date(since)
     until_dt = parse_date(until, end_of_day=True)
-    if since_dt:
-        query = query.where(RequestLog.created_at >= since_dt)
-    if until_dt:
-        query = query.where(RequestLog.created_at <= until_dt)
+
+    def apply_request_log_filters(statement):
+        if source:
+            statement = statement.where(RequestLog.source == source)
+        if normalized_method:
+            statement = statement.where(RequestLog.method == normalized_method)
+        if parsed_status_code is not None:
+            statement = statement.where(RequestLog.status_code == parsed_status_code)
+        if selected_user_id:
+            statement = statement.where(RequestLog.user_id == selected_user_id)
+        if q_value:
+            like = f"%{q_value}%"
+            statement = statement.where(
+                or_(
+                    RequestLog.path.ilike(like),
+                    RequestLog.route_path.ilike(like),
+                    RequestLog.request_id.ilike(like),
+                    RequestLog.agent_id.ilike(like),
+                    RequestLog.agent_name.ilike(like),
+                    RequestLog.device_id.ilike(like),
+                    RequestLog.device_name.ilike(like),
+                )
+            )
+        if since_dt:
+            statement = statement.where(RequestLog.created_at >= since_dt)
+        if until_dt:
+            statement = statement.where(RequestLog.created_at <= until_dt)
+        return statement
+
+    per_page = 50
+    total_count = int(db.scalar(apply_request_log_filters(select(func.count(RequestLog.id)))) or 0)
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * per_page
+
+    query = apply_request_log_filters(
+        select(RequestLog, User.name.label("user_name")).outerjoin(User, User.id == RequestLog.user_id)
+    ).order_by(RequestLog.created_at.desc())
 
     rows = [
         {"log": log, "user_name": user_name, "business": request_log_business(log)}
-        for log, user_name in db.execute(query.limit(limit)).all()
+        for log, user_name in db.execute(query.offset(offset).limit(per_page)).all()
     ]
     users = db.scalars(select(User).order_by(User.name)).all()
+
+    def request_log_page_url(page_number: int) -> str:
+        params = {
+            "source": source,
+            "method": normalized_method,
+            "status_code": status_code,
+            "q": q,
+            "user_id": str(selected_user_id) if selected_user_id else "",
+            "since": since,
+            "until": until,
+            "page": str(page_number),
+        }
+        query_string = urlencode({key: value for key, value in params.items() if value})
+        return f"/admin/request-logs?{query_string}" if query_string else "/admin/request-logs"
+
+    start_index = offset + 1 if total_count else 0
+    end_index = min(offset + len(rows), total_count)
+    pagination = {
+        "page": current_page,
+        "per_page": per_page,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "start_index": start_index,
+        "end_index": end_index,
+        "first_url": request_log_page_url(1),
+        "prev_url": request_log_page_url(max(1, current_page - 1)),
+        "next_url": request_log_page_url(min(total_pages, current_page + 1)),
+        "last_url": request_log_page_url(total_pages),
+        "has_prev": current_page > 1,
+        "has_next": current_page < total_pages,
+    }
     return templates.TemplateResponse(
         request,
         "request_logs.html",
@@ -1700,8 +1744,9 @@ def request_logs_page(
                 "user_id": str(selected_user_id) if selected_user_id else "",
                 "since": since,
                 "until": until,
-                "limit": limit,
+                "page": current_page,
             },
+            pagination=pagination,
         ),
     )
 

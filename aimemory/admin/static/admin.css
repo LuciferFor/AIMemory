@@ -4522,3 +4522,351 @@ html[data-theme="dark"] .detail-attachment-card figcaption {
 html[data-theme="dark"] .detail-attachment-card img {
   background: #0f141b;
 }
+
+/* Request log pagination and compact table layout. */
+.request-log-filter {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.request-log-filter button {
+  min-height: 46px;
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.request-log-table + .pagination-bar {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.pagination-summary {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pagination-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 6px;
+}
+
+.pagination-jump label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pagination-jump input {
+  width: 74px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 8px;
+  text-align: center;
+  font-weight: 800;
+}
+
+.pagination-jump button {
+  min-width: 54px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  padding: 0 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.pager-button {
+  display: inline-flex;
+  min-width: 58px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pager-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.request-log-table {
+  width: 100%;
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.request-log-table .col-log-time {
+  width: 110px;
+}
+
+.request-log-table .col-log-business {
+  width: 120px;
+}
+
+.request-log-table .col-log-request {
+  width: 32%;
+}
+
+.request-log-table .col-log-status {
+  width: 160px;
+}
+
+.request-log-table .col-log-actor {
+  width: 230px;
+}
+
+.request-log-table .col-log-client {
+  width: 190px;
+}
+
+.request-log-table .col-log-actions {
+  width: 110px;
+}
+
+.request-log-table th,
+.request-log-table td {
+  display: table-cell;
+  vertical-align: middle;
+}
+
+.request-cell,
+.log-status-cell,
+.identity-cell,
+.client-cell,
+.action-cell {
+  display: table-cell !important;
+}
+
+.time-cell,
+.log-status-cell,
+.identity-cell,
+.client-cell {
+  text-align: center;
+}
+
+.time-cell strong,
+.request-cell strong,
+.request-cell code,
+.identity-cell strong,
+.client-cell strong {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-status-cell > *,
+.identity-cell > *,
+.client-cell > *,
+.request-cell > * {
+  margin: 2px auto;
+}
+
+.identity-cell .muted,
+.identity-subline {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.request-log-table .action-button.detail {
+  min-width: 70px;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.request-log-detail-row > td {
+  padding: 14px 18px 18px;
+}
+
+.request-log-detail-card {
+  max-width: 1180px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.log-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.log-detail-block {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+  text-align: left;
+}
+
+.log-detail-block.wide {
+  grid-column: 1 / -1;
+}
+
+.log-detail-block h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.log-detail-block p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.log-detail-primary {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.log-detail-block pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.log-detail-block .summary-memory-list {
+  gap: 10px;
+}
+
+.log-detail-block .summary-memory-item {
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .pagination-bar {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .pager-button {
+  border-color: #344052;
+  background: #121a23;
+  color: #dbeafe;
+}
+
+html[data-theme="dark"] .pager-button:not(.disabled):hover {
+  border-color: #4b82f1;
+  background: #17253b;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .pagination-jump input,
+html[data-theme="dark"] .pagination-jump button {
+  border-color: #344052;
+  background: #121a23;
+  color: #dbeafe;
+}
+
+html[data-theme="dark"] .pagination-jump button:hover {
+  border-color: #4b82f1;
+  background: #17253b;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .pagination-summary {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .request-log-detail-card,
+html[data-theme="dark"] .log-detail-block {
+  border-color: #2d3542;
+  background: #111820;
+  color: var(--text);
+}
+
+html[data-theme="dark"] .log-detail-block h3 {
+  color: #9fb4cc;
+}
+
+html[data-theme="dark"] .log-detail-primary,
+html[data-theme="dark"] .log-detail-block p,
+html[data-theme="dark"] .log-detail-block pre {
+  color: var(--text);
+}
+
+html[data-theme="dark"] .log-detail-block .summary-memory-item {
+  border-color: #344052;
+  background: #0f151d;
+}
+
+html[data-theme="dark"] .request-log-table .action-button.detail {
+  border-color: #31568d;
+  background: #13233a;
+  color: #dbeafe;
+}
+
+html[data-theme="dark"] .request-log-table .action-button.detail:hover {
+  border-color: #4b82f1;
+  background: #1f3b63;
+  color: #ffffff;
+}
+
+@media (max-width: 1100px) {
+  .request-log-filter {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .pagination-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pagination-nav {
+    flex-wrap: wrap;
+  }
+
+  .log-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

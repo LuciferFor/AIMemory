@@ -310,6 +310,9 @@ class _RequestLogDb(_FakeDb):
     def execute(self, query) -> _Rows:
         return _Rows([(self.logs[0], "lucifer"), (self.logs[1], None), (self.logs[2], "lucifer")])
 
+    def scalar(self, query) -> int:
+        return len(self.logs)
+
     def scalars(self, query) -> _Rows:
         return _Rows(self.users)
 
@@ -684,10 +687,15 @@ def test_admin_request_logs_page_lists_request_metadata(monkeypatch) -> None:
     client = _client(monkeypatch, db=db)
     _login_and_csrf(client)
 
-    response = client.get("/admin/request-logs?source=api&method=POST&status_code=200&q=context&user_id=&limit=100")
+    response = client.get("/admin/request-logs?source=api&method=POST&status_code=200&q=context&user_id=&page=1")
 
     assert response.status_code == 200
     assert "请求日志" in response.text
+    assert "共 3 条" in response.text
+    assert "第 1 页，共 1 页" in response.text
+    assert "跳转请求日志页码" in response.text
+    assert "Request ID" not in response.text.split("<thead>", 1)[1].split("</thead>", 1)[0]
+    assert "数量上限" not in response.text
     assert "请求记忆" in response.text
     assert "/v1/memories/context" in response.text
     assert "request-log-123" in response.text

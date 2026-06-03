@@ -2,6 +2,64 @@
 {% set title = "请求日志 - AIMemory 管理后台" %}
 {% set heading = "请求日志" %}
 {% set subheading = "接口与后台访问记录" %}
+
+{% macro render_pagination(pagination, filters) %}
+<div class="pagination-bar">
+  <div class="pagination-summary">
+    共 {{ pagination.total_count }} 条
+    {% if pagination.total_count %}
+    / 第 {{ pagination.start_index }}-{{ pagination.end_index }} 条
+    {% endif %}
+    / 第 {{ pagination.page }} 页，共 {{ pagination.total_pages }} 页
+  </div>
+  <nav class="pagination-nav" aria-label="请求日志分页">
+    {% if pagination.has_prev %}
+    <a class="pager-button" href="{{ pagination.first_url }}">首页</a>
+    <a class="pager-button" href="{{ pagination.prev_url }}">上一页</a>
+    {% else %}
+    <span class="pager-button disabled">首页</span>
+    <span class="pager-button disabled">上一页</span>
+    {% endif %}
+    {% if pagination.has_next %}
+    <a class="pager-button" href="{{ pagination.next_url }}">下一页</a>
+    <a class="pager-button" href="{{ pagination.last_url }}">末页</a>
+    {% else %}
+    <span class="pager-button disabled">下一页</span>
+    <span class="pager-button disabled">末页</span>
+    {% endif %}
+    <form method="get" action="/admin/request-logs" class="pagination-jump" aria-label="跳转请求日志页码">
+      <input type="hidden" name="source" value="{{ filters.source }}">
+      <input type="hidden" name="method" value="{{ filters.method }}">
+      <input type="hidden" name="status_code" value="{{ filters.status_code }}">
+      <input type="hidden" name="user_id" value="{{ filters.user_id }}">
+      <input type="hidden" name="q" value="{{ filters.q }}">
+      <input type="hidden" name="since" value="{{ filters.since }}">
+      <input type="hidden" name="until" value="{{ filters.until }}">
+      <label>跳到
+        <input type="number" name="page" min="1" max="{{ pagination.total_pages }}" value="{{ pagination.page }}">
+        页
+      </label>
+      <button type="submit">跳转</button>
+    </form>
+  </nav>
+</div>
+{% endmacro %}
+
+{% macro render_ai_usage(summary) %}
+{% if summary.get("ai_request_total_tokens") %}
+<div class="log-detail-block">
+  <h3>AI 消耗</h3>
+  <div class="term-list">
+    {% set request_ai_usage = summary.get("ai_usage") or {} %}
+    <code class="term-chip">总 tokens {{ summary.get("ai_request_total_tokens") }}</code>
+    {% if not summary.get("category_usage") and request_ai_usage.get("prompt_tokens") %}<code class="term-chip">输入 {{ request_ai_usage.get("prompt_tokens") }}</code>{% endif %}
+    {% if not summary.get("category_usage") and request_ai_usage.get("completion_tokens") %}<code class="term-chip">输出 {{ request_ai_usage.get("completion_tokens") }}</code>{% endif %}
+    {% if not summary.get("category_usage") and request_ai_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ request_ai_usage.get("cached_tokens") }}</code>{% endif %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
 {% block content %}
 <section class="panel">
   <form method="get" action="/admin/request-logs" class="filter-grid request-log-filter">
@@ -36,14 +94,12 @@
     <label>结束日期
       <input type="date" name="until" value="{{ filters.until }}">
     </label>
-    <label>数量上限
-      <input type="number" name="limit" min="1" max="500" value="{{ filters.limit }}">
-    </label>
     <button type="submit" class="primary">搜索</button>
   </form>
 </section>
 
 <section class="panel request-log-table-panel">
+  {{ render_pagination(pagination, filters) }}
   <table class="request-log-table">
     <colgroup>
       <col class="col-log-time">
@@ -52,7 +108,7 @@
       <col class="col-log-status">
       <col class="col-log-actor">
       <col class="col-log-client">
-      <col class="col-log-request-id">
+      <col class="col-log-actions">
     </colgroup>
     <thead>
       <tr>
@@ -62,14 +118,18 @@
         <th>状态</th>
         <th>身份</th>
         <th>客户端</th>
-        <th>Request ID</th>
+        <th>操作</th>
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
       {% set log = row.log %}
-      <tr>
-        <td title="{{ full_datetime(log.created_at) }}">{{ compact_datetime(log.created_at) }}</td>
+      {% set summary = log.response_summary or {} %}
+      {% set summary_type = summary.get("type", "unknown") %}
+      <tr class="request-log-main-row">
+        <td class="time-cell" title="{{ full_datetime(log.created_at) }}">
+          <strong>{{ compact_datetime(log.created_at) }}</strong>
+        </td>
         <td>
           <span class="business-chip {{ row.business.class }}" title="{{ log.method }} {{ log.path }}">{{ row.business.label }}</span>
         </td>
@@ -80,53 +140,49 @@
           <code title="{{ log.route_path }}">{{ log.route_path }}</code>
           {% endif %}
         </td>
-        <td>
+        <td class="log-status-cell">
           <span class="badge {{ 'ready' if log.status_code < 400 else 'pending' if log.status_code < 500 else 'failed' }}">{{ log.status_code }}</span>
           <span class="muted">{{ "%.2f"|format(log.duration_ms) }}ms</span>
-          {% if log.response_summary and log.response_summary.get("ai_request_total_tokens") %}
-          <code class="ai-token-chip" title="本次业务请求触发的 AI 总 token 消耗">AI {{ log.response_summary.get("ai_request_total_tokens") }} tokens</code>
+          {% if summary.get("ai_request_total_tokens") %}
+          <code class="ai-token-chip" title="本次业务请求触发的 AI 总 token 消耗">AI {{ summary.get("ai_request_total_tokens") }} tokens</code>
           {% endif %}
-          {% if log.error_type %}<code title="{{ log.error_type }}">{{ log.error_type }}</code>{% endif %}
+          {% if log.error_type %}<code title="{{ log.error_type }}">{{ short_middle(log.error_type, 16, 8) }}</code>{% endif %}
         </td>
-        <td>
+        <td class="identity-cell">
           {% if log.admin_username %}
           <strong>{{ log.admin_username }}</strong>
           <span class="muted">管理员</span>
           {% elif log.user_id %}
           <strong title="{{ log.user_id }}">{{ row.user_name or short_middle(log.user_id, 8, 6) }}</strong>
-          {% if log.api_key_prefix %}<span class="muted">{{ log.api_key_prefix }}</span>{% endif %}
+          {% if log.api_key_prefix %}<span class="muted" title="{{ log.api_key_prefix }}">{{ log.api_key_prefix }}</span>{% endif %}
           {% if log.agent_id %}
-          <div class="identity-subline" title="{{ log.agent_id }}">智能体 {{ log.agent_name or short_middle(log.agent_id, 8, 6) }}</div>
+          <span class="identity-subline" title="{{ log.agent_id }}">智能体 {{ log.agent_name or short_middle(log.agent_id, 8, 6) }}</span>
           {% endif %}
           {% if log.device_id %}
-          <div class="identity-subline" title="{{ log.device_id }}">设备 {{ log.device_name or short_middle(log.device_id, 10, 6) }}</div>
+          <span class="identity-subline" title="{{ log.device_id }}">设备 {{ log.device_name or short_middle(log.device_id, 10, 6) }}</span>
           {% endif %}
           {% else %}
           <span class="muted">未识别</span>
           {% endif %}
         </td>
         <td class="client-cell">
-          <span title="{{ log.client_ip or '' }}">{{ log.client_ip or "-" }}</span>
-          <code title="{{ log.user_agent or '' }}">{{ short_middle(log.user_agent or "-", 24, 10) }}</code>
+          <strong title="{{ log.client_ip or '' }}">{{ log.client_ip or "-" }}</strong>
+          <code title="{{ log.user_agent or '' }}">{{ short_middle(log.user_agent or "-", 22, 8) }}</code>
+          <code title="{{ log.request_id }}">RID {{ short_middle(log.request_id, 8, 6) }}</code>
         </td>
-        <td><code title="{{ log.request_id }}">{{ short_middle(log.request_id, 10, 8) }}</code></td>
+        <td class="action-cell">
+          <button type="button" class="action-button detail" data-request-log-toggle="{{ log.id }}" aria-expanded="false" aria-controls="request-log-detail-{{ log.id }}">详情</button>
+        </td>
       </tr>
-      <tr class="request-log-detail-row">
+      <tr class="request-log-detail-row" id="request-log-detail-{{ log.id }}" hidden>
         <td colspan="7">
-          <details class="request-log-summary">
-            <summary>详情</summary>
-            {% if log.response_summary %}
-            {% set summary = log.response_summary %}
-            {% set summary_type = summary.get("type", "unknown") %}
+          <div class="request-log-detail-card">
             <div class="summary-head">
               <span>业务 {{ row.business.label }}</span>
               <span>类型 {{ summary_type }}</span>
-              {% if summary.get("ai_request_total_tokens") %}
-              <span>AI 总 tokens {{ summary.get("ai_request_total_tokens") }}</span>
-              {% endif %}
-              {% if summary_type in ["context", "search"] %}
-              <span>命中 {{ summary.get("result_count", 0) }}</span>
-              {% endif %}
+              <span>Request ID {{ short_middle(log.request_id, 14, 10) }}</span>
+              {% if summary.get("ai_request_total_tokens") %}<span>AI 总 tokens {{ summary.get("ai_request_total_tokens") }}</span>{% endif %}
+              {% if summary_type in ["context", "search"] %}<span>命中 {{ summary.get("result_count", 0) }}</span>{% endif %}
               {% if summary_type == "context" %}
               <span>上下文 {{ summary.get("context_chars", 0) }} 字</span>
               <span>{{ "已截断" if summary.get("truncated") else "未截断" }}</span>
@@ -134,86 +190,28 @@
               <span>提取 {{ summary.get("extracted", 0) }}</span>
               <span>写入 {{ summary.get("written", 0) }}</span>
               {% if summary.get("skipped") %}<span>跳过 {{ summary.get("skipped") }}</span>{% endif %}
-              {% if summary.get("auto_merge_scheduled") is not none %}
-              <span>自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</span>
-              {% endif %}
-              {% if summary.get("auto_merge_candidate_count") %}
-              <span>相似候选 {{ summary.get("auto_merge_candidate_count") }}</span>
-              {% endif %}
+              {% if summary.get("auto_merge_scheduled") is not none %}<span>自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</span>{% endif %}
+              {% if summary.get("auto_merge_candidate_count") %}<span>相似候选 {{ summary.get("auto_merge_candidate_count") }}</span>{% endif %}
               {% if summary.get("deduplicated") %}<span>重复请求已跳过</span>{% endif %}
-              {% else %}
-              <span>业务摘要</span>
               {% endif %}
             </div>
-            <div class="summary-query">
-              <div>
-                <span class="summary-label">{{ "保存来源" if summary_type == "extract" else "保存标题" if summary_type == "write" else "请求内容" }}</span>
-                <strong>{{ summary.get("title_preview") if summary_type == "write" else summary.get("query_preview") or summary.get("query") or summary.get("reason") or "未记录" }}</strong>
-              </div>
-              {% if summary_type == "write" and summary.get("content_preview") %}
-              <div>
-                <span class="summary-label">保存正文</span>
-                <span>{{ summary.get("content_preview") }}</span>
-              </div>
-              {% endif %}
-              {% if summary_type == "extract" %}
-              <div>
-                <span class="summary-label">保存参数</span>
-                <span class="term-list">
-                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
-                  {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
-                  {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
-                  {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
-                  {% if summary.get("skipped") %}<code class="term-chip ignored">跳过 {{ summary.get("skipped") }}</code>{% endif %}
-                  {% if summary.get("auto_merge_scheduled") is not none %}<code class="term-chip {{ 'hit' if summary.get('auto_merge_scheduled') else '' }}">自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</code>{% endif %}
-                  {% if summary.get("auto_merge_candidate_count") is not none %}<code class="term-chip">相似候选 {{ summary.get("auto_merge_candidate_count") }}</code>{% endif %}
-                  {% if summary.get("auto_merge_review_memory_count") %}<code class="term-chip">整理记忆 {{ summary.get("auto_merge_review_memory_count") }}</code>{% endif %}
-                  {% if summary.get("auto_merge_reason") %}<code class="term-chip">原因 {{ summary.get("auto_merge_reason") }}</code>{% endif %}
-                </span>
-              </div>
-              {% if summary.get("skipped_items") %}
-              <div>
-                <span class="summary-label">跳过候选</span>
-                <div class="summary-items">
-                  {% for item in summary.get("skipped_items", []) %}
-                  <div class="summary-memory-card">
-                    <strong>{{ item.get("title") or "未命名" }}</strong>
-                    {% if item.get("category") %}<code>{{ item.get("category") }}</code>{% endif %}
-                    {% if item.get("reason") %}<span class="muted">原因 {{ item.get("reason") }}</span>{% endif %}
-                  </div>
-                  {% endfor %}
-                </div>
-              </div>
-              {% endif %}
-              {% endif %}
-              {% if summary_type == "write" %}
-              <div>
-                <span class="summary-label">保存参数</span>
-                <span class="term-list">
-                  {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
-                  {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
-                  {% if summary.get("external_id") %}<code class="term-chip">外部ID {{ short_middle(summary.get("external_id"), 14, 8) }}</code>{% endif %}
-                  {% if summary.get("action") %}<code class="term-chip hit">{{ summary.get("action") }}</code>{% endif %}
-                  {% if summary.get("attachment_count") is not none %}<code class="term-chip">附件 {{ summary.get("attachment_count") }}</code>{% endif %}
-                </span>
-              </div>
-              {% endif %}
-              {% if summary.get("ai_request_total_tokens") %}
-              <div>
-                <span class="summary-label">AI 消耗</span>
-                <span class="term-list">
-                  {% set request_ai_usage = summary.get("ai_usage") or {} %}
-                  <code class="term-chip">总 tokens {{ summary.get("ai_request_total_tokens") }}</code>
-                  {% if not summary.get("category_usage") and request_ai_usage.get("prompt_tokens") %}<code class="term-chip">输入 {{ request_ai_usage.get("prompt_tokens") }}</code>{% endif %}
-                  {% if not summary.get("category_usage") and request_ai_usage.get("completion_tokens") %}<code class="term-chip">输出 {{ request_ai_usage.get("completion_tokens") }}</code>{% endif %}
-                  {% if not summary.get("category_usage") and request_ai_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ request_ai_usage.get("cached_tokens") }}</code>{% endif %}
-                </span>
-              </div>
-              {% endif %}
+
+            {% if log.response_summary %}
+            <div class="log-detail-grid">
+              <section class="log-detail-block wide">
+                <h3>{{ "保存来源" if summary_type == "extract" else "保存标题" if summary_type == "write" else "请求内容" }}</h3>
+                <p class="log-detail-primary">{{ summary.get("title_preview") if summary_type == "write" else summary.get("query_preview") or summary.get("query") or summary.get("reason") or "未记录" }}</p>
+                {% if summary_type == "write" and summary.get("content_preview") %}
+                <p class="muted">{{ summary.get("content_preview") }}</p>
+                {% endif %}
+              </section>
+
+              {{ render_ai_usage(summary) }}
+
               {% if summary.get("category_source") or summary.get("selected_category") %}
-              <div>
-                <span class="summary-label">AI 选择分类</span>
-                <span class="term-list">
+              <section class="log-detail-block">
+                <h3>AI 选择分类</h3>
+                <div class="term-list">
                   {% set category_usage = summary.get("category_usage") or {} %}
                   {% if summary.get("category_source") %}<code class="term-chip">来源 {{ summary.get("category_source") }}</code>{% endif %}
                   {% if summary.get("selected_category") %}<code class="term-chip hit">{{ summary.get("selected_category") }}</code>{% endif %}
@@ -225,13 +223,14 @@
                   {% if category_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ category_usage.get("cached_tokens") }}</code>{% endif %}
                   {% if summary.get("category_reason") %}<code class="term-chip">{{ summary.get("category_reason") }}</code>{% endif %}
                   {% if summary.get("category_error") %}<code class="term-chip ignored">{{ summary.get("category_error") }}</code>{% endif %}
-                </span>
-              </div>
+                </div>
+              </section>
               {% endif %}
+
               {% if summary.get("keyword_source") %}
-              <div>
-                <span class="summary-label">AI 理解</span>
-                <span class="term-list">
+              <section class="log-detail-block">
+                <h3>AI 理解</h3>
+                <div class="term-list">
                   {% set ai_usage = summary.get("ai_usage") or {} %}
                   <code class="term-chip">来源 {{ summary.get("keyword_source") }}</code>
                   {% if summary.get("ai_duration_ms") %}<code class="term-chip">耗时 {{ summary.get("ai_duration_ms") }}ms</code>{% endif %}
@@ -241,56 +240,71 @@
                   {% if ai_usage.get("cached_tokens") %}<code class="term-chip">缓存 {{ ai_usage.get("cached_tokens") }}</code>{% endif %}
                   {% if summary.get("intent_summary") %}<code class="term-chip">{{ summary.get("intent_summary") }}</code>{% endif %}
                   {% if summary.get("ai_error") %}<code class="term-chip ignored">{{ summary.get("ai_error") }}</code>{% endif %}
-                </span>
-              </div>
-              <div>
-                <span class="summary-label">AI 提取关键词</span>
-                <span class="term-list">
+                </div>
+              </section>
+
+              <section class="log-detail-block">
+                <h3>AI 提取关键词</h3>
+                <div class="term-list">
                   {% for term in summary.get("ai_keywords", []) %}
                   <code class="term-chip hit">{{ term }}</code>
                   {% else %}
                   <span class="muted">无</span>
                   {% endfor %}
-                </span>
-              </div>
+                </div>
+              </section>
+
               {% if summary.get("negative_keywords") %}
-              <div>
-                <span class="summary-label">AI 排除关键词</span>
-                <span class="term-list">
+              <section class="log-detail-block">
+                <h3>AI 排除关键词</h3>
+                <div class="term-list">
                   {% for term in summary.get("negative_keywords", []) %}
                   <code class="term-chip ignored">{{ term }}</code>
                   {% endfor %}
-                </span>
-              </div>
+                </div>
+              </section>
               {% endif %}
-              <div>
-                <span class="summary-label">AI 忽略关键词</span>
-                <span class="term-list">
+
+              <section class="log-detail-block">
+                <h3>AI 忽略关键词</h3>
+                <div class="term-list">
                   {% for term in summary.get("ai_ignored_terms", []) %}
                   <code class="term-chip ignored">{{ term }}</code>
                   {% else %}
                   <span class="muted">无</span>
                   {% endfor %}
-                </span>
-              </div>
+                </div>
+              </section>
               {% endif %}
-              <div>
-                <span class="summary-label">请求参数</span>
-                <span class="term-list">
+
+              <section class="log-detail-block">
+                <h3>{{ "保存参数" if summary_type in ["extract", "write"] else "请求参数" }}</h3>
+                <div class="term-list">
                   {% if summary.get("agent_id") %}<code class="term-chip">智能体 {{ summary.get("agent_name") or short_middle(summary.get("agent_id"), 8, 6) }}</code>{% endif %}
                   {% if summary.get("device_id") %}<code class="term-chip">设备 {{ summary.get("device_name") or short_middle(summary.get("device_id"), 10, 6) }}</code>{% endif %}
                   {% if summary.get("category") %}<code class="term-chip">分类 {{ summary.get("category") }}</code>{% endif %}
                   {% if summary.get("category_not_found") %}<code class="term-chip ignored">分类不存在</code>{% endif %}
+                  {% if summary.get("external_id") %}<code class="term-chip">外部ID {{ short_middle(summary.get("external_id"), 14, 8) }}</code>{% endif %}
+                  {% if summary.get("action") %}<code class="term-chip hit">{{ summary.get("action") }}</code>{% endif %}
+                  {% if summary.get("reason") %}<code class="term-chip">原因 {{ summary.get("reason") }}</code>{% endif %}
+                  {% if summary.get("transcript_chars") is not none %}<code class="term-chip">对话 {{ summary.get("transcript_chars") }} 字</code>{% endif %}
                   {% if summary.get("top_k") %}<code class="term-chip">top_k {{ summary.get("top_k") }}</code>{% endif %}
                   {% if summary.get("max_chars") %}<code class="term-chip">max_chars {{ summary.get("max_chars") }}</code>{% endif %}
                   {% if summary.get("min_matched_terms") %}<code class="term-chip">最少命中 {{ summary.get("min_matched_terms") }}</code>{% endif %}
-                  {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") %}<span class="muted">未记录</span>{% endif %}
-                </span>
-              </div>
+                  {% if summary.get("attachment_count") is not none %}<code class="term-chip">附件 {{ summary.get("attachment_count") }}</code>{% endif %}
+                  {% if summary.get("skipped") %}<code class="term-chip ignored">跳过 {{ summary.get("skipped") }}</code>{% endif %}
+                  {% if summary.get("auto_merge_scheduled") is not none %}<code class="term-chip {{ 'hit' if summary.get('auto_merge_scheduled') else '' }}">自动合并 {{ "已计划" if summary.get("auto_merge_scheduled") else "未触发" }}</code>{% endif %}
+                  {% if summary.get("auto_merge_candidate_count") is not none %}<code class="term-chip">相似候选 {{ summary.get("auto_merge_candidate_count") }}</code>{% endif %}
+                  {% if summary.get("auto_merge_review_memory_count") %}<code class="term-chip">整理记忆 {{ summary.get("auto_merge_review_memory_count") }}</code>{% endif %}
+                  {% if summary.get("auto_merge_reason") %}<code class="term-chip">原因 {{ summary.get("auto_merge_reason") }}</code>{% endif %}
+                  {% if not summary.get("agent_id") and not summary.get("top_k") and not summary.get("max_chars") and not summary.get("reason") %}<span class="muted">未记录</span>{% endif %}
+                </div>
+              </section>
+
               {% if summary_type in ["context", "search"] %}
-              <div>
-                <span class="summary-label">检索链路</span>
-                <span class="term-list">
+              <section class="log-detail-block">
+                <h3>检索链路</h3>
+                <div class="term-list">
                   <code class="term-chip {{ 'hit' if summary.get('category_result_count', 0) else 'ignored' }}">
                     分类内 {{ summary.get("selected_category_for_search") or summary.get("selected_category") or summary.get("category") or "-" }} / {{ summary.get("category_result_count", 0) }}
                   </code>
@@ -300,110 +314,131 @@
                   <code class="term-chip {{ 'hit' if summary.get('content_fallback_count', 0) else '' }}">
                     跨分类正文 {{ "未执行" if summary.get("category_result_count", 0) or summary.get("title_fallback_count", 0) else "命中 " ~ summary.get("content_fallback_count", 0) }}
                   </code>
-                  {% if summary.get("fallback_used") %}
-                  <code class="term-chip hit">已使用 {{ summary.get("fallback_stage") }}</code>
-                  {% endif %}
-                </span>
-              </div>
+                  {% if summary.get("fallback_used") %}<code class="term-chip hit">已使用 {{ summary.get("fallback_stage") }}</code>{% endif %}
+                </div>
+              </section>
               {% endif %}
-              <div>
-                <span class="summary-label">有效关键词</span>
-                <span class="term-list">
+
+              <section class="log-detail-block">
+                <h3>有效关键词</h3>
+                <div class="term-list">
                   {% for term in summary.get("query_terms", []) %}
                   <code class="term-chip">{{ term }}</code>
                   {% else %}
                   <span class="muted">无</span>
                   {% endfor %}
-                </span>
-              </div>
-              <div>
-                <span class="summary-label">忽略关键词</span>
-                <span class="term-list">
+                </div>
+              </section>
+
+              <section class="log-detail-block">
+                <h3>忽略关键词</h3>
+                <div class="term-list">
                   {% for term in summary.get("ignored_terms", []) %}
                   <code class="term-chip ignored">{{ term }}</code>
                   {% else %}
                   <span class="muted">无</span>
                   {% endfor %}
-                </span>
-              </div>
+                </div>
+              </section>
+
               {% if summary.get("no_result_reason") %}
-              <div>
-                <span class="summary-label">未命中原因</span>
-                <span class="term-list">
+              <section class="log-detail-block">
+                <h3>未命中原因</h3>
+                <div class="term-list">
                   <code class="term-chip ignored">{{ summary.get("no_result_reason") }}</code>
-                </span>
-              </div>
+                </div>
+              </section>
               {% endif %}
+
               {% if summary.get("context_text_preview") is not none %}
-              <div class="summary-context-preview">
-                <span class="summary-label">实际返回</span>
+              <section class="log-detail-block wide">
+                <h3>实际返回</h3>
                 {% if summary.get("context_text_preview") %}
                 <pre>{{ summary.get("context_text_preview") }}</pre>
                 {% else %}
-                <span class="muted">空，本次没有给客户端附加记忆上下文。</span>
+                <p class="muted">空，本次没有给客户端附加记忆上下文。</p>
                 {% endif %}
                 {% if summary.get("context_text_preview_truncated") %}
-                <span class="muted">这里只记录前 {{ summary.get("context_text_preview")|length }} 字预览。</span>
+                <p class="muted">这里只记录前 {{ summary.get("context_text_preview")|length }} 字预览。</p>
                 {% endif %}
-              </div>
+              </section>
               {% endif %}
-            </div>
-            {% if summary.get("items") %}
-            <div class="summary-memory-list">
-              {% for item in summary.get("items", []) %}
-              <article class="summary-memory-item">
-                <header>
-                  <strong>{{ item.get("title", "未命名记忆") }}</strong>
-                  {% if item.get("external_id") %}<code title="{{ item.get("external_id") }}">{{ short_middle(item.get("external_id"), 16, 8) }}</code>{% endif %}
-                  {% if item.get("score") is not none %}<span class="muted">分数 {{ "%.3f"|format(item.get("score")) }}</span>{% endif %}
-                  {% if item.get("category") %}<span class="muted">分类 {{ item.get("category") }}</span>{% endif %}
-                  {% if item.get("action") %}<span class="badge ready">{{ item.get("action") }}</span>{% endif %}
-                </header>
-                {% if summary_type in ["context", "search"] %}
-                <div class="matched-terms">
-                  <span class="summary-label">命中关键词</span>
-                  <span class="term-list">
-                    {% for term in item.get("matched_terms", []) %}
-                    <code class="term-chip hit">{{ term }}</code>
-                    {% else %}
-                    <span class="muted">无</span>
-                    {% endfor %}
-                  </span>
+
+              {% if summary.get("skipped_items") %}
+              <section class="log-detail-block wide">
+                <h3>跳过候选</h3>
+                <div class="summary-memory-list">
+                  {% for item in summary.get("skipped_items", []) %}
+                  <article class="summary-memory-item">
+                    <header>
+                      <strong>{{ item.get("title") or "未命名" }}</strong>
+                      {% if item.get("category") %}<code>{{ item.get("category") }}</code>{% endif %}
+                      {% if item.get("reason") %}<span class="muted">原因 {{ item.get("reason") }}</span>{% endif %}
+                    </header>
+                  </article>
+                  {% endfor %}
                 </div>
-                <div class="matched-terms">
-                  <span class="summary-label">命中字段</span>
-                  <span class="term-list">
-                    {% for field in item.get("matched_fields", []) %}
-                    <code class="term-chip">{{ field }}</code>
-                    {% else %}
-                    <span class="muted">无</span>
-                    {% endfor %}
-                  </span>
-                </div>
-                {% endif %}
-                {% if item.get("score_parts") %}
-                <div class="matched-terms">
-                  <span class="summary-label">分数明细</span>
-                  <span class="term-list">
-                    {% for name, value in item.get("score_parts", {}).items() %}
-                    {% if value %}
-                    <code class="term-chip">{{ name }} {{ "%.3f"|format(value) }}</code>
+              </section>
+              {% endif %}
+
+              <section class="log-detail-block wide">
+                <h3>命中记忆</h3>
+                {% if summary.get("items") %}
+                <div class="summary-memory-list">
+                  {% for item in summary.get("items", []) %}
+                  <article class="summary-memory-item">
+                    <header>
+                      <strong>{{ item.get("title", "未命名记忆") }}</strong>
+                      {% if item.get("external_id") %}<code title="{{ item.get('external_id') }}">{{ short_middle(item.get("external_id"), 16, 8) }}</code>{% endif %}
+                      {% if item.get("score") is not none %}<span class="muted">分数 {{ "%.3f"|format(item.get("score")) }}</span>{% endif %}
+                      {% if item.get("category") %}<span class="muted">分类 {{ item.get("category") }}</span>{% endif %}
+                      {% if item.get("action") %}<span class="badge ready">{{ item.get("action") }}</span>{% endif %}
+                    </header>
+                    {% if summary_type in ["context", "search"] %}
+                    <div class="matched-terms">
+                      <span class="summary-label">命中关键词</span>
+                      <span class="term-list">
+                        {% for term in item.get("matched_terms", []) %}
+                        <code class="term-chip hit">{{ term }}</code>
+                        {% else %}
+                        <span class="muted">无</span>
+                        {% endfor %}
+                      </span>
+                    </div>
+                    <div class="matched-terms">
+                      <span class="summary-label">命中字段</span>
+                      <span class="term-list">
+                        {% for field in item.get("matched_fields", []) %}
+                        <code class="term-chip">{{ field }}</code>
+                        {% else %}
+                        <span class="muted">无</span>
+                        {% endfor %}
+                      </span>
+                    </div>
                     {% endif %}
-                    {% endfor %}
-                  </span>
+                    {% if item.get("score_parts") %}
+                    <div class="matched-terms">
+                      <span class="summary-label">分数明细</span>
+                      <span class="term-list">
+                        {% for name, value in item.get("score_parts", {}).items() %}
+                        {% if value %}<code class="term-chip">{{ name }} {{ "%.3f"|format(value) }}</code>{% endif %}
+                        {% endfor %}
+                      </span>
+                    </div>
+                    {% endif %}
+                    {% if item.get("content_preview") %}<p>{{ item.get("content_preview") }}</p>{% endif %}
+                  </article>
+                  {% endfor %}
                 </div>
+                {% else %}
+                <p class="empty">本次没有返回记忆。</p>
                 {% endif %}
-                {% if item.get("content_preview") %}<p>{{ item.get("content_preview") }}</p>{% endif %}
-              </article>
-              {% endfor %}
+              </section>
             </div>
-            {% else %}
-            <p class="empty">本次没有返回记忆。</p>
-            {% endif %}
             {% else %}
             <p class="empty">无业务摘要</p>
             {% endif %}
-          </details>
+          </div>
         </td>
       </tr>
       {% else %}
@@ -411,5 +446,24 @@
       {% endfor %}
     </tbody>
   </table>
+  {{ render_pagination(pagination, filters) }}
 </section>
+
+<script>
+  document.addEventListener("click", function (event) {
+    const button = event.target.closest("[data-request-log-toggle]");
+    if (!button) {
+      return;
+    }
+    const id = button.dataset.requestLogToggle;
+    const row = document.getElementById("request-log-detail-" + id);
+    if (!row) {
+      return;
+    }
+    const isHidden = row.hasAttribute("hidden");
+    row.toggleAttribute("hidden", !isHidden);
+    button.setAttribute("aria-expanded", String(isHidden));
+    button.textContent = isHidden ? "收起" : "详情";
+  });
+</script>
 {% endblock %}
