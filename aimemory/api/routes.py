@@ -56,6 +56,7 @@ from aimemory.services.ai_memory_review import (
 )
 from aimemory.services.category_analysis import CategoryAnalysis, analyze_memory_category
 from aimemory.services.openai_compatible import chat_completion, token_usage_summary
+from aimemory.services.memory_policy import technical_or_operational_memory_skip_reason
 from aimemory.services.query_analysis import (
     MemoryRequestAnalysis,
     QueryAnalysis,
@@ -89,11 +90,13 @@ CONTEXT_USAGE_HINT: dict[str, Any] = {
 
 WRITE_POLICY_RULES = [
     "只保存未来有复用价值的信息。",
-    "一条事实、偏好、规则或工作流保存成一条记忆。",
-    "相似内容合并；如果新信息覆盖旧规则，复用同一个 external_id 更新旧记忆。",
+    "只保存像人一样会长期记住的内容：生活细节、长期偏好、关系、人设、说话方式、角色互动方式。",
+    "一条事实、偏好、关系、人设或说话方式保存成一条记忆。",
+    "相似内容合并；如果新信息覆盖旧偏好或人设，复用同一个 external_id 更新旧记忆。",
     "每条记忆必须选择一个 category；优先使用已有分类，只有确实不合适时才创建新分类。",
     "metadata 至少建议包含 category、scope、priority、tags、source。",
-    "保存前去重，避免把同一偏好或规则反复写入。",
+    "保存前去重，避免把同一偏好、关系或人设反复写入。",
+    "配置、修复、故障、报错、部署、日志、命令、路径、接口、数据库、服务状态等技术运维内容永远不要保存；这些应进入文档或工单，不进入人格记忆库。",
     "一次性出图要求、单次生成参数、临时姿势/服装/风格要求默认不保存；除非用户明确说记住、以后都这样、长期固定。",
 ]
 
@@ -106,15 +109,26 @@ WRITE_POLICY_FORBIDDEN = [
     "一次性出图要求",
     "单次生成参数",
     "临时姿势、服装或风格要求",
+    "配置记录",
+    "修复记录",
+    "故障排查",
+    "报错处理",
+    "部署步骤",
+    "日志内容",
+    "命令、脚本或路径",
+    "接口、数据库或服务状态",
+    "OneBot/OpenClaw/AIMemory 运维内容",
     "明显很快过期的临时信息",
     "未经允许的他人隐私信息",
 ]
 
 WRITE_POLICY_PROMPT = """请从即将压缩或归档的对话中提取值得长期保存的记忆。
-只保存未来有复用价值的信息，不要保存临时闲聊、重复内容、密码、密钥、sudo 密码或敏感凭据。
+只保存像人一样会长期记住的内容：生活细节、长期偏好、关系、人设、说话方式、角色互动方式。
+不要保存临时闲聊、重复内容、密码、密钥、sudo 密码或敏感凭据。
+不要保存配置、修复、故障、报错、部署、日志、命令、路径、接口、数据库、服务状态、OneBot/OpenClaw/AIMemory 运维内容；即使用户明确说“记住”，这些也应进入文档或工单，不进入长期人格记忆库。
 不要保存一次性出图要求、单次生成参数、临时姿势/服装/风格要求，除非用户明确要求“记住”“以后都这样”“长期固定”。
-把每条独立事实、偏好、规则或工作流拆成一条记忆；相似内容要合并。
-如果新信息覆盖旧规则，请使用相同 external_id 更新旧记忆。
+把每条独立事实、偏好、关系、人设或说话方式拆成一条记忆；相似内容要合并。
+如果新信息覆盖旧偏好或人设，请使用相同 external_id 更新旧记忆。
 每条记忆必须包含 category。优先从已有分类列表选择；如果没有合适分类，可以创建简短明确的新分类。
 请只输出 JSON 数组，每条包含 external_id、category、title、content、metadata、occurred_at。"""
 
@@ -125,12 +139,12 @@ WRITE_POLICY_OUTPUT_SCHEMA: dict[str, Any] = {
         "required": ["external_id", "category", "title", "content", "metadata"],
         "properties": {
             "external_id": "稳定唯一 ID，用 kebab-case 或带日期的 slug。",
-            "category": "细事务分类名称，例如 回答风格、角色设定、角色关系、群聊规则、游戏资料、出图偏好、出图流程、技术资料、故障排查、自动化任务、工作流程、生活偏好；优先使用已有分类。",
+            "category": "细事务分类名称，例如 回答风格、角色设定、角色关系、群聊规则、游戏偏好、娱乐偏好、出图长期偏好、生活偏好、饮食偏好、情绪偏好、称呼偏好；优先使用已有分类，不要创建技术/故障/配置类分类。",
             "title": "简短可检索标题。",
             "content": "完整但精炼的记忆内容。",
             "metadata": {
-                "category": "回答风格|角色设定|角色关系|群聊规则|游戏资料|出图偏好|出图流程|技术资料|故障排查|自动化任务|工作流程|生活偏好|其它",
-                "scope": "私聊|群聊|全局|图片|语音|工作流",
+                "category": "回答风格|角色设定|角色关系|群聊规则|游戏偏好|娱乐偏好|出图长期偏好|生活偏好|饮食偏好|情绪偏好|称呼偏好|其它",
+                "scope": "私聊|群聊|全局|图片|语音",
                 "priority": "高|普通|低",
                 "tags": ["关键词"],
                 "source": "来源，例如 conversation_compression",
@@ -142,18 +156,21 @@ WRITE_POLICY_OUTPUT_SCHEMA: dict[str, Any] = {
 
 EXTRACT_MEMORY_SYSTEM_PROMPT = (
     "你是 AIMemory 的长期记忆提取器。请从对话 transcript 中提取值得未来复用的长期记忆。"
-    "只保存稳定事实、偏好、约束、关系、项目背景、工作流和长期指令；不要保存临时闲聊、重复表达、"
+    "只保存像人一样会长期记住的内容：生活细节、长期偏好、关系、人设、说话方式、角色互动方式；"
+    "不要保存临时闲聊、重复表达、"
     "密码、密钥、访问令牌、sudo 密码或敏感凭据。"
+    "不要保存配置、修复、故障、报错、部署、日志、命令、路径、接口、数据库、服务状态、"
+    "OneBot/OpenClaw/AIMemory 运维内容；即使用户明确说“记住”，这些也应进入文档或工单，不进入长期人格记忆库。"
     "不要保存一次性出图要求、单次生成参数、临时姿势/服装/风格要求；"
     "只有当用户明确说“记住”“以后都这样”“长期固定”“以后默认”时，才可保存为长期出图偏好。"
     "每条记忆必须使用第三方视角，例如“用户偏好……”“助手应……”。"
-    "优先使用已有细分类；不要把角色关系、回答风格、游戏资料、出图偏好、出图流程、技术资料、故障排查都塞进一个粗分类。"
+    "优先使用已有细分类；不要创建技术资料、故障排查、配置、部署、工作流程这类分类。"
     "没有合适分类时可以创建简短明确的新分类。"
     "只输出 JSON 对象，不要输出解释。"
     "\n\nJSON 输出格式："
     "{\"memories\":[{\"external_id\":\"稳定 slug，可省略\","
     "\"category\":\"分类\",\"title\":\"简短标题\",\"content\":\"完整但精炼的正文\","
-    "\"metadata\":{\"scope\":\"全局|私聊|群聊|工作流\",\"priority\":\"高|普通|低\",\"tags\":[\"关键词\"]},"
+    "\"metadata\":{\"scope\":\"全局|私聊|群聊|图片|语音\",\"priority\":\"高|普通|低\",\"tags\":[\"关键词\"]},"
     "\"occurred_at\":null}]}"
 )
 
@@ -1433,6 +1450,15 @@ def normalize_extracted_memory_candidates(
         )
         if temporary_reason:
             record_skipped_candidate(skipped, raw, temporary_reason)
+            continue
+        technical_reason = technical_or_operational_memory_skip_reason(
+            title=title,
+            content=memory_content,
+            category=category,
+            metadata=raw.get("metadata"),
+        )
+        if technical_reason:
+            record_skipped_candidate(skipped, raw, technical_reason)
             continue
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         metadata = {

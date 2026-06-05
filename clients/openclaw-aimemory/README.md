@@ -20,7 +20,9 @@ requests or before context compaction.
   extracted memories may include `category`, but AIMemory can classify them on
   the server when admin AI is configured. Before compaction, only structured
   user/assistant messages are extracted by default, and the extraction prompt
-  asks the model to save memories in a third-person style.
+  asks the model to save memories in a third-person style. Configuration,
+  fixes, troubleshooting, deployment logs, paths, scripts, and API/service
+  status are not saved as long-term memory.
 - Does not print API keys or full memory content in logs.
 - Keeps group/channel memory injection disabled unless explicitly configured.
 

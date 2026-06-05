@@ -200,6 +200,8 @@ test("extraction prompt asks for third-person memory wording", () => {
   assert.match(messages[0].content, /用户……/);
   assert.match(messages[0].content, /助手应……/);
   assert.match(messages[0].content, /不要写成“我喜欢”“我应该”/);
+  assert.match(messages[0].content, /配置、修复、故障/);
+  assert.match(messages[1].content, /配置\/修复\/故障/);
 });
 
 test("fetchMemoryContext returns context text and items", async () => {

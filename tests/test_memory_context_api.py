@@ -126,9 +126,9 @@ def test_extract_schedules_auto_merge_background_task(monkeypatch) -> None:
             content=json.dumps(
                 [
                     {
-                        "category": "工作流程",
-                        "title": "部署诊断直接执行",
-                        "content": "助手应直接执行部署诊断并给简短结论。",
+                        "category": "回答风格",
+                        "title": "回答偏好：直接给结论",
+                        "content": "用户偏好助手先直接给出简短结论，再补充必要说明。",
                     }
                 ],
                 ensure_ascii=False,
@@ -157,7 +157,7 @@ def test_extract_schedules_auto_merge_background_task(monkeypatch) -> None:
         "/v1/memories/extract",
         json={
             "agent_id": "assistant",
-            "transcript": "user: 部署怎么检查\nassistant: 直接检查并给结论",
+            "transcript": "user: 以后回答先给结论\nassistant: 好的，我会先给简短结论",
             "reason": "conversation_compaction",
         },
     )
@@ -248,6 +248,88 @@ def test_extract_keeps_explicit_durable_image_preference() -> None:
 
     assert len(candidates) == 1
     assert candidates[0]["title"] == "绯夜长期出图偏好"
+
+
+def test_extract_skips_technical_memory_even_when_explicit_remember() -> None:
+    skipped = []
+
+    candidates = routes.normalize_extracted_memory_candidates(
+        json.dumps(
+            {
+                "memories": [
+                    {
+                        "category": "故障排查",
+                        "title": "OneBot 连接失败修复流程",
+                        "content": "用户要求记住 OneBot 连接失败时先看日志、检查端口并重启服务。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        "explicit_remember",
+        {},
+        transcript="user: 记住这个 OneBot 修复方法",
+        skipped=skipped,
+    )
+
+    assert candidates == []
+    assert skipped[0]["reason"] == "technical_or_troubleshooting_memory_not_allowed"
+
+
+def test_extract_keeps_human_persona_memory_with_rule_word() -> None:
+    skipped = []
+
+    candidates = routes.normalize_extracted_memory_candidates(
+        json.dumps(
+            {
+                "memories": [
+                    {
+                        "category": "回答风格",
+                        "title": "绯夜说话风格",
+                        "content": "绯夜的角色互动规则是语气冷淡但关心用户，称呼用户为主人。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        "conversation_compaction",
+        {},
+        transcript="user: 绯夜说话要冷淡一点但别太凶",
+        skipped=skipped,
+    )
+
+    assert len(candidates) == 1
+    assert skipped == []
+
+
+def test_extract_ignores_source_metadata_paths_for_human_memory() -> None:
+    skipped = []
+
+    candidates = routes.normalize_extracted_memory_candidates(
+        json.dumps(
+            {
+                "memories": [
+                    {
+                        "category": "角色关系",
+                        "title": "用户与绯夜的互动模式",
+                        "content": "用户喜欢绯夜用冷淡但关心的方式互动。",
+                        "metadata": {
+                            "tags": ["角色关系"],
+                            "source_metadata": {"session_file": "/home/lucifer/.openclaw/session.jsonl"},
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        "conversation_compaction",
+        {},
+        transcript="user: 绯夜这样说话挺好",
+        skipped=skipped,
+    )
+
+    assert len(candidates) == 1
+    assert skipped == []
 
 
 def test_context_returns_standard_prompt_and_items(monkeypatch) -> None:
@@ -756,6 +838,7 @@ def test_search_results_uses_server_ai_category_when_missing(monkeypatch) -> Non
         ),
     )
     monkeypatch.setattr(routes, "search_memories", lambda *args: calls.append(args) or [])
+    monkeypatch.setattr(routes, "search_memories_across_categories", lambda *args, **kwargs: [])
     monkeypatch.setattr(routes, "filter_high_frequency_terms", lambda *args, **kwargs: (args[4], []))
     payload = MemorySearchRequest(agent_id="assistant", query="苹果")
 
@@ -1114,6 +1197,11 @@ def test_write_policy_returns_standard_fields(monkeypatch) -> None:
     assert set(body) == {"prompt", "output_schema", "required_fields", "rules", "forbidden", "categories"}
     assert body["required_fields"] == ["external_id", "category", "title", "content", "metadata"]
     assert "密码" in body["forbidden"]
+    assert "故障排查" in body["forbidden"]
+    schema_text = json.dumps(body["output_schema"], ensure_ascii=False)
+    assert "技术资料" not in schema_text
+    assert "自动化任务" not in schema_text
+    assert "配置、修复、故障" in body["prompt"]
 
 
 def test_categories_endpoint_returns_user_categories(monkeypatch) -> None:

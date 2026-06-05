@@ -796,11 +796,11 @@ export function buildExtractionMessages(policy, sourceText, reason) {
   return [
     {
       role: "system",
-      content: `${prompt}${categoryText}\n\n请使用第三方视角提取和改写记忆，写成“用户……”“助手应……”这类表述；不要写成“我喜欢”“我应该”。只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
+      content: `${prompt}${categoryText}\n\n请使用第三方视角提取和改写记忆，写成“用户……”“助手应……”这类表述；不要写成“我喜欢”“我应该”。配置、修复、故障、部署、日志、路径、脚本、接口、数据库、服务状态等技术运维内容不要提取为记忆，即使用户说了“记住”。只输出 JSON 数组，不要输出解释。${schema ? `\n\n推荐格式:\n${schema}` : ""}`,
     },
     {
       role: "user",
-      content: `来源: ${reason}\n\n请从以下内容提取值得长期保存的记忆，忽略密码、密钥、token、sudo 密码和一次性闲聊。\n\n${sourceText}`,
+      content: `来源: ${reason}\n\n请从以下内容提取值得长期保存的人类式记忆，忽略密码、密钥、token、sudo 密码、一次性闲聊，以及配置/修复/故障/部署/日志/路径/脚本/接口类内容。\n\n${sourceText}`,
     },
   ];
 }

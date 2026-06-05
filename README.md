@@ -110,6 +110,11 @@ curl -X GET http://localhost:10011/v1/memories/write-policy \
 The write-policy response includes the current category list. Memory extraction
 clients may provide a category, but AIMemory can also classify writes on the
 server and create a short new category only when no existing category fits.
+Automatic extraction is intentionally limited to human-like long-term memory:
+life details, durable preferences, relationships, persona, speaking style, and
+interaction patterns. Configuration, fixes, troubleshooting, deployment, logs,
+commands, paths, API/database/service status, and other technical operations are
+skipped even if the transcript says to remember them.
 
 Delete memory:
 
@@ -211,7 +216,13 @@ Useful admin commands:
 aimemory create-user <name>
 aimemory create-api-key <name> --label <label>
 aimemory revoke-api-key <key-prefix>
+aimemory cleanup-technical-memories --user lucifer
+aimemory cleanup-technical-memories --user lucifer --apply
 ```
+
+`cleanup-technical-memories` is a dry-run unless `--apply` is provided. It
+soft-deletes old configuration/fix/troubleshooting memories without physically
+removing rows.
 
 ## OpenClaw Plugin
 
