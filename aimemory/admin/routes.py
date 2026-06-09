@@ -279,6 +279,10 @@ def ai_config_view(config: LlmProviderConfig | None) -> dict[str, Any]:
         if config
         else defaults["query_analysis_max_output_tokens"],
         "query_analysis_timeout_ms": getattr(config, "query_analysis_timeout_ms", defaults["query_analysis_timeout_ms"]) if config else defaults["query_analysis_timeout_ms"],
+        "ai_chat_allow_select": getattr(config, "ai_chat_allow_select", defaults["ai_chat_allow_select"]) if config else defaults["ai_chat_allow_select"],
+        "ai_chat_allow_insert": getattr(config, "ai_chat_allow_insert", defaults["ai_chat_allow_insert"]) if config else defaults["ai_chat_allow_insert"],
+        "ai_chat_allow_update": getattr(config, "ai_chat_allow_update", defaults["ai_chat_allow_update"]) if config else defaults["ai_chat_allow_update"],
+        "ai_chat_allow_delete": getattr(config, "ai_chat_allow_delete", defaults["ai_chat_allow_delete"]) if config else defaults["ai_chat_allow_delete"],
     }
 
 
@@ -930,6 +934,10 @@ async def save_ai_settings(request: Request, db: Session = Depends(get_db)) -> R
     config.query_analysis_enabled = form.get("query_analysis_enabled") == "on"
     config.query_analysis_max_output_tokens = query_analysis_max_output_tokens
     config.query_analysis_timeout_ms = query_analysis_timeout_ms
+    config.ai_chat_allow_select = form.get("ai_chat_allow_select") == "on"
+    config.ai_chat_allow_insert = form.get("ai_chat_allow_insert") == "on"
+    config.ai_chat_allow_update = form.get("ai_chat_allow_update") == "on"
+    config.ai_chat_allow_delete = form.get("ai_chat_allow_delete") == "on"
     api_key = form.get("api_key", "").strip()
     if api_key:
         secret = get_settings().ai_config_encryption_secret

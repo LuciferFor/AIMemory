@@ -62,6 +62,29 @@
       </div>
     </section>
 
+    <section class="ai-settings-section">
+      <h2>AI 对话 SQL 权限</h2>
+      <p class="muted">这些权限只作用于后台“AI 对话”。写操作会限制目标表、必须单条 SQL、禁止密钥字段、UPDATE/DELETE 必须带 WHERE，且单次最多影响 20 行。</p>
+      <div class="ai-settings-grid four">
+        <label class="checkbox-line">
+          <input type="checkbox" name="ai_chat_allow_select" {{ "checked" if config.ai_chat_allow_select else "" }}>
+          查询 SELECT
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="ai_chat_allow_insert" {{ "checked" if config.ai_chat_allow_insert else "" }}>
+          新增 INSERT
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="ai_chat_allow_update" {{ "checked" if config.ai_chat_allow_update else "" }}>
+          修改 UPDATE
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="ai_chat_allow_delete" {{ "checked" if config.ai_chat_allow_delete else "" }}>
+          删除 DELETE
+        </label>
+      </div>
+    </section>
+
     {% if not encryption_ready %}
     <div class="notice error">AI_CONFIG_ENCRYPTION_SECRET 未配置，不能保存新的 API Key。</div>
     {% endif %}
@@ -80,5 +103,6 @@
   <h2>使用方式</h2>
   <p class="muted">在“记忆”列表勾选记录后点击“AI 整理选中记忆”，或进入单条详情点击“AI 整理此记忆”。AI 只生成建议，修改需要管理员逐条确认。</p>
   <p class="muted">启用“AI 检索提词”后，/context 和 /search 会先让模型把用户请求压缩成检索关键词；模型失败时自动回退纯算法分词。</p>
+  <p class="muted">“AI 对话 SQL 权限”打开后，AI 对话可以按权限执行增删改查；建议平时只开查询，需要批量整理时再临时开启写入权限。</p>
 </section>
 {% endblock %}

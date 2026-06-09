@@ -356,6 +356,10 @@ class _AiReviewDb(_MemoryDb):
             query_analysis_enabled=True,
             query_analysis_max_output_tokens=256,
             query_analysis_timeout_ms=3000,
+            ai_chat_allow_select=True,
+            ai_chat_allow_insert=False,
+            ai_chat_allow_update=False,
+            ai_chat_allow_delete=False,
         )
         self.runs = {}
         self.suggestions = {}
@@ -765,6 +769,7 @@ def test_admin_ai_settings_page_shows_review_prompt_injection(monkeypatch) -> No
 
     assert response.status_code == 200
     assert "整理前置注入提示" in response.text
+    assert "AI 对话 SQL 权限" in response.text
     assert "按长期价值和重复度整理。" in response.text
 
 
@@ -790,6 +795,9 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
             "query_analysis_enabled": "on",
             "query_analysis_max_output_tokens": "256",
             "query_analysis_timeout_ms": "3000",
+            "ai_chat_allow_select": "on",
+            "ai_chat_allow_insert": "on",
+            "ai_chat_allow_update": "on",
         },
         follow_redirects=False,
     )
@@ -810,6 +818,10 @@ def test_admin_can_save_encrypted_ai_settings(monkeypatch) -> None:
     assert db.config.query_analysis_enabled is True
     assert db.config.query_analysis_max_output_tokens == 256
     assert db.config.query_analysis_timeout_ms == 3000
+    assert db.config.ai_chat_allow_select is True
+    assert db.config.ai_chat_allow_insert is True
+    assert db.config.ai_chat_allow_update is True
+    assert db.config.ai_chat_allow_delete is False
     assert db.committed is True
 
 

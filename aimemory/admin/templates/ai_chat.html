@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% set title = (thread.title ~ " - " if thread else "") ~ "AI 对话 - AIMemory 管理后台" %}
 {% set heading = "AI 对话" %}
-{% set subheading = "只读查询、配置排查与项目问答" %}
+{% set subheading = "可控 SQL、配置排查与项目问答" %}
 {% block content %}
 {% if not ai_configured %}
 <div class="notice error">AI 配置未启用或 API Key 未保存。请先到“AI 设置”页面配置 OpenAI-compatible API。</div>
@@ -15,7 +15,7 @@
     <header class="ai-thread-head">
       <div>
         <strong>AI 对话</strong>
-        <span>只读查询和项目排查</span>
+        <span>可控 SQL 和项目排查</span>
       </div>
       <a href="/admin/ai-settings" title="AI 设置" class="ai-thread-icon-link">设置</a>
     </header>
@@ -53,7 +53,7 @@
     <header class="ai-chat-workspace-head">
       <div>
         <h2>{{ thread.title }}</h2>
-        <p>模型 {{ ai_model or "未配置" }} · 自动只读 SQL · 不会写入数据库</p>
+        <p>模型 {{ ai_model or "未配置" }} · 按 AI 设置权限执行 SQL · 写操作会被校验和限量</p>
       </div>
     </header>
 
@@ -93,8 +93,10 @@
               {% for result in message_meta.get("sql_results", []) %}
               <details class="ai-sql-card">
                 <summary>
-                  <span>{{ result.get("title") or "只读查询" }}</span>
+                  <span>{{ result.get("title") or "SQL 操作" }}</span>
                   <span class="ai-sql-status {{ 'ok' if result.get('status') == 'ok' else 'failed' }}">{{ "成功" if result.get("status") == "ok" else "失败" }}</span>
+                  {% if result.get("operation") %}<span>{{ result.get("operation")|upper }}</span>{% endif %}
+                  {% if result.get("committed") %}<span>已提交</span>{% endif %}
                   <span>{{ result.get("row_count", 0) }} 行</span>
                 </summary>
                 {% if result.get("purpose") %}<p>{{ result.get("purpose") }}</p>{% endif %}
@@ -149,7 +151,7 @@
       <textarea name="content" rows="4" maxlength="12000" required placeholder="给 AIMemory AI 发送消息，例如：帮我查一下最近 31.9 请求记忆为什么没有命中。"></textarea>
       <div class="ai-compose-actions">
         <div class="ai-compose-chips">
-          <span>只读 SQL</span>
+          <span>可控 SQL</span>
           <span>项目上下文</span>
           <span>日志排查</span>
         </div>
@@ -169,7 +171,7 @@
         <textarea name="content" rows="3" maxlength="12000" required placeholder="直接输入问题，发送后自动新建对话"></textarea>
         <div class="ai-compose-actions">
           <div class="ai-compose-chips">
-            <span>只读 SQL</span>
+            <span>可控 SQL</span>
             <span>智能排查</span>
             <span>历史对话</span>
           </div>

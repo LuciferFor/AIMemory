@@ -16,17 +16,26 @@ from aimemory.services.openai_compatible import OpenAICompatibleError, chat_comp
 MAX_HISTORY_MESSAGES = 16
 MAX_SQL_QUERIES = 3
 MAX_SQL_ROWS = 100
+MAX_WRITE_ROWS = 20
 SQL_TIMEOUT_MS = 3000
 MAX_USER_MESSAGE_CHARS = 12000
 MAX_ASSISTANT_CHARS = 24000
 MAX_THREAD_TITLE_CHARS = 18
 SENSITIVE_COLUMN_RE = re.compile(r"(api.*key|key|password|secret|token|encrypted)", re.I)
-FORBIDDEN_SQL_RE = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|do|merge|execute|vacuum|refresh|listen|notify|set|reset)\b",
+CONTROL_SQL_RE = re.compile(
+    r"\b(drop|alter|create|truncate|grant|revoke|copy|call|do|merge|execute|vacuum|refresh|listen|notify|reset)\b",
     re.I,
 )
 DANGEROUS_FUNCTION_RE = re.compile(r"\b(pg_sleep|pg_read_file|pg_ls_dir|pg_stat_file|lo_import|lo_export|dblink)\b", re.I)
 SENSITIVE_SQL_RE = re.compile(r"(api[_-]?key|password|secret|token|encrypted)", re.I)
+WRITABLE_TABLES = {
+    "memories",
+    "memory_categories",
+    "search_stopwords",
+    "memory_agents",
+    "memory_devices",
+}
+WRITE_OPERATIONS = {"insert", "update", "delete"}
 
 
 class AiChatError(ValueError):
@@ -77,19 +86,47 @@ def generate_ai_chat_title(config: LlmProviderConfig, api_key: str, user_content
     return str(generate_ai_chat_title_result(config, api_key, user_content).get("title") or make_thread_title(user_content))
 
 
-def build_project_context(db: Session) -> str:
+def ai_chat_sql_permissions(config: LlmProviderConfig | None) -> dict[str, bool]:
+    return {
+        "select": bool(getattr(config, "ai_chat_allow_select", True)),
+        "insert": bool(getattr(config, "ai_chat_allow_insert", False)),
+        "update": bool(getattr(config, "ai_chat_allow_update", False)),
+        "delete": bool(getattr(config, "ai_chat_allow_delete", False)),
+    }
+
+
+def format_sql_permissions(permissions: dict[str, bool]) -> str:
+    labels = {
+        "select": "查询 SELECT",
+        "insert": "新增 INSERT",
+        "update": "修改 UPDATE",
+        "delete": "删除 DELETE",
+    }
+    return "、".join(f"{label}={'开启' if permissions.get(key) else '关闭'}" for key, label in labels.items())
+
+
+def build_project_context(db: Session, config: LlmProviderConfig | None = None) -> str:
+    permissions = ai_chat_sql_permissions(config)
+    can_write = any(permissions.get(key) for key in WRITE_OPERATIONS)
     return (
         "你是 AIMemory 管理后台内置 AI 助手，面向已登录管理员。"
         "AIMemory 是一个给 AI/OpenClaw 提供长期记忆的服务：业务 API 写入、分类、检索和返回记忆上下文；"
         "后台提供用户、接口密钥、分类、记忆、停用词、请求日志、AI 整理和本 AI 对话。"
         "服务端不再使用 embedding，检索依靠分类、关键词、停用词、词形质量过滤和 PostgreSQL 文本/模糊检索。"
         "OpenClaw 插件负责在用户请求前调用 /v1/memories/context，并在显式记住或压缩前写入记忆。"
-        "你可以解释配置、排查日志、生成只读 SQL 查询和解释查询结果。"
-        "你绝不能声称已经修改数据库、配置、文件或服务；本对话只允许自动执行只读 SELECT 查询。"
-        "不要要求或暴露 API Key、管理员密码、sudo 密码、token。"
-        "只读 SQL 也不能查询 key/password/secret/token/encrypted 相关字段。"
-        "如果需要查询数据库，请在 sql_queries 里给出最多 3 条 PostgreSQL 只读 SELECT/WITH 查询。"
-        "请优先使用中文回答。\n\n"
+        "你可以解释配置、排查日志、生成 SQL 操作和解释执行结果。"
+        f"当前后台 AI 对话 SQL 权限：{format_sql_permissions(permissions)}。"
+        + (
+            "如果生成写入 SQL，必须谨慎、只改管理员明确要求的数据，并优先使用软删除字段 deleted_at；不要批量改动无关数据。"
+            if can_write
+            else "当前未开启写入权限，你绝不能声称已经修改数据库、配置、文件或服务。"
+        )
+        + "不要要求或暴露 API Key、管理员密码、sudo 密码、token。"
+        + "SQL 不能读取或写入 key/password/secret/token/encrypted 相关字段。"
+        + "写入 SQL 只允许操作 memories、memory_categories、search_stopwords、memory_agents、memory_devices 这些非密钥业务表。"
+        + "UPDATE/DELETE 必须带 WHERE 条件，单次影响行数必须很少；不要使用 DROP/ALTER/CREATE/TRUNCATE/COPY/CALL/DO 等控制语句。"
+        + "如果需要操作数据库，请在 sql_queries 里给出最多 3 条 PostgreSQL SQL。"
+        + "请优先使用中文回答。\n\n"
         f"数据库结构摘要：\n{schema_summary(db)}"
     )
 
@@ -120,10 +157,10 @@ def build_plan_messages(project_context: str, history: list[AiChatMessage]) -> l
             "role": "system",
             "content": (
                 project_context
-                + "\n\n你现在要先生成 JSON 查询计划。只输出 JSON 对象，不要输出 markdown。"
+                + "\n\n你现在要先生成 JSON SQL 计划。只输出 JSON 对象，不要输出 markdown。"
                 "格式：{\"assistant_message\":\"先给管理员看的简短说明\","
-                "\"sql_queries\":[{\"title\":\"查询标题\",\"purpose\":\"用途\",\"sql\":\"SELECT ...\"}]}。"
-                "不需要查库时 sql_queries 返回空数组。"
+                "\"sql_queries\":[{\"title\":\"操作标题\",\"purpose\":\"用途\",\"sql\":\"SELECT/INSERT/UPDATE/DELETE ...\"}]}。"
+                "不需要操作数据库时 sql_queries 返回空数组。"
                 "assistant_message 必须是非空中文文本。"
                 "即使管理员要求联网、访问网页或查询外部 URL，你也不能输出空白；"
                 "请在 assistant_message 中明确说明后台 AI 没有浏览器或外部联网访问工具。"
@@ -183,7 +220,7 @@ def strip_json_code_fence(value: str) -> str:
     return fenced.group(1).strip() if fenced else text_value
 
 
-def validate_readonly_sql(sql: str) -> str:
+def normalize_sql(sql: str) -> str:
     value = str(sql or "").strip()
     if not value:
         raise AiChatError("SQL 为空。")
@@ -191,36 +228,132 @@ def validate_readonly_sql(sql: str) -> str:
         raise AiChatError("只允许单条 SQL，不能包含分号。")
     normalized = re.sub(r"/\*.*?\*/", " ", value, flags=re.S)
     normalized = re.sub(r"--.*?$", " ", normalized, flags=re.M).strip()
-    if not re.match(r"^(select|with)\b", normalized, re.I):
-        raise AiChatError("只允许 SELECT 或 WITH ... SELECT 查询。")
-    if FORBIDDEN_SQL_RE.search(normalized):
-        raise AiChatError("SQL 包含禁止的写入或控制语句。")
+    return normalized
+
+
+def sql_operation(normalized_sql: str) -> str:
+    match = re.match(r"^(select|with|insert|update|delete)\b", normalized_sql, re.I)
+    if not match:
+        raise AiChatError("只允许 SELECT、WITH ... SELECT、INSERT、UPDATE 或 DELETE。")
+    operation = match.group(1).lower()
+    if operation == "with":
+        if re.search(r"\b(insert|update|delete)\b", normalized_sql, re.I):
+            raise AiChatError("WITH 只允许用于只读 SELECT，写入 SQL 请直接以 INSERT/UPDATE/DELETE 开头。")
+        return "select"
+    return operation
+
+
+def extract_write_table(normalized_sql: str, operation: str) -> str:
+    patterns = {
+        "insert": r"^insert\s+into\s+([a-zA-Z_][\w.]*)\b",
+        "update": r"^update\s+([a-zA-Z_][\w.]*)\b",
+        "delete": r"^delete\s+from\s+([a-zA-Z_][\w.]*)\b",
+    }
+    match = re.match(patterns[operation], normalized_sql, re.I)
+    if not match:
+        raise AiChatError("无法识别写入 SQL 的目标表。")
+    return match.group(1).split(".")[-1].lower()
+
+
+def validate_sql(sql: str, permissions: dict[str, bool] | None = None) -> dict[str, Any]:
+    normalized = normalize_sql(sql)
+    operation = sql_operation(normalized)
+    effective_permissions = permissions or {"select": True, "insert": False, "update": False, "delete": False}
+    if not effective_permissions.get(operation, False):
+        raise AiChatError(f"当前 AI 对话没有 {operation.upper()} 权限。")
+    if CONTROL_SQL_RE.search(normalized):
+        raise AiChatError("SQL 包含禁止的控制语句。")
     if DANGEROUS_FUNCTION_RE.search(normalized):
         raise AiChatError("SQL 包含禁止的危险函数。")
     if SENSITIVE_SQL_RE.search(normalized):
         raise AiChatError("SQL 不能查询密钥、密码、token 或加密字段。")
-    return normalized
+
+    table_name = None
+    if operation in WRITE_OPERATIONS:
+        table_name = extract_write_table(normalized, operation)
+        if table_name not in WRITABLE_TABLES:
+            raise AiChatError(f"AI 对话不允许写入 {table_name} 表。")
+        if operation in {"update", "delete"} and not re.search(r"\bwhere\b", normalized, re.I):
+            raise AiChatError("UPDATE/DELETE 必须包含 WHERE 条件。")
+        if operation == "insert":
+            if not re.search(r"\bvalues\b", normalized, re.I) or re.search(r"\bselect\b", normalized, re.I):
+                raise AiChatError("INSERT 只允许明确 VALUES 写入，不允许 INSERT ... SELECT。")
+    return {"sql": normalized, "operation": operation, "table": table_name}
 
 
-def execute_readonly_sql(db: Session, sql: str, *, limit: int = MAX_SQL_ROWS) -> dict[str, Any]:
-    clean_sql = validate_readonly_sql(sql)
+def validate_readonly_sql(sql: str) -> str:
+    return str(validate_sql(sql, {"select": True, "insert": False, "update": False, "delete": False})["sql"])
+
+
+def execute_sql(
+    db: Session,
+    sql: str,
+    *,
+    permissions: dict[str, bool] | None = None,
+    limit: int = MAX_SQL_ROWS,
+    max_write_rows: int = MAX_WRITE_ROWS,
+) -> dict[str, Any]:
+    validated = validate_sql(sql, permissions)
+    clean_sql = validated["sql"]
+    operation = validated["operation"]
     bind = db.get_bind()
     rows: list[dict[str, Any]] = []
     columns: list[str] = []
     with bind.connect() as conn:
         trans = conn.begin()
         try:
-            conn.execute(text("SET TRANSACTION READ ONLY"))
             conn.execute(text(f"SET LOCAL statement_timeout = '{SQL_TIMEOUT_MS}ms'"))
-            result = conn.execute(text(f"SELECT * FROM ({clean_sql}) AS aimemory_ai_query LIMIT {int(limit)}"))
-            columns = list(result.keys())
-            for row in result.mappings().fetchmany(limit):
-                rows.append(serialize_row(row))
-            trans.rollback()
+            if operation == "select":
+                conn.execute(text("SET TRANSACTION READ ONLY"))
+                result = conn.execute(text(f"SELECT * FROM ({clean_sql}) AS aimemory_ai_query LIMIT {int(limit)}"))
+                columns = list(result.keys())
+                for row in result.mappings().fetchmany(limit):
+                    rows.append(serialize_row(row))
+                row_count = len(rows)
+                trans.rollback()
+                return {
+                    "operation": operation,
+                    "table": validated.get("table"),
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": row_count,
+                    "truncated": len(rows) >= limit,
+                    "committed": False,
+                }
+
+            result = conn.execute(text(clean_sql))
+            row_count = int(result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0)
+            if result.returns_rows:
+                columns = list(result.keys())
+                for row in result.mappings().fetchmany(limit):
+                    rows.append(serialize_row(row))
+                if row_count <= 0:
+                    row_count = len(rows)
+            if row_count > max_write_rows:
+                trans.rollback()
+                raise AiChatError(f"写入影响 {row_count} 行，超过单次上限 {max_write_rows} 行，已回滚。")
+            trans.commit()
+            return {
+                "operation": operation,
+                "table": validated.get("table"),
+                "columns": columns,
+                "rows": rows,
+                "row_count": row_count,
+                "truncated": len(rows) >= limit,
+                "committed": True,
+            }
         except Exception:
             trans.rollback()
             raise
-    return {"columns": columns, "rows": rows, "row_count": len(rows), "truncated": len(rows) >= limit}
+
+
+def execute_readonly_sql(db: Session, sql: str, *, limit: int = MAX_SQL_ROWS) -> dict[str, Any]:
+    return execute_sql(
+        db,
+        sql,
+        permissions={"select": True, "insert": False, "update": False, "delete": False},
+        limit=limit,
+    )
 
 
 def serialize_row(row: RowMapping) -> dict[str, Any]:
@@ -243,14 +376,22 @@ def serialize_value(value: Any) -> Any:
     return str(value)
 
 
-def execute_plan_sql(db: Session, queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def execute_plan_sql(
+    db: Session,
+    queries: list[dict[str, Any]],
+    *,
+    permissions: dict[str, bool] | None = None,
+) -> list[dict[str, Any]]:
     summaries = []
     for query in queries[:MAX_SQL_QUERIES]:
         summary = {
-            "title": query.get("title") or "只读查询",
+            "title": query.get("title") or "SQL 操作",
             "purpose": query.get("purpose") or "",
             "sql": query.get("sql") or "",
             "status": "pending",
+            "operation": None,
+            "table": None,
+            "committed": False,
             "columns": [],
             "rows": [],
             "row_count": 0,
@@ -258,7 +399,7 @@ def execute_plan_sql(db: Session, queries: list[dict[str, Any]]) -> list[dict[st
             "error": None,
         }
         try:
-            result = execute_readonly_sql(db, summary["sql"])
+            result = execute_sql(db, summary["sql"], permissions=permissions)
             summary.update(result)
             summary["status"] = "ok"
         except Exception as exc:
@@ -279,8 +420,8 @@ def build_final_messages(
             "role": "system",
             "content": (
                 project_context
-                + "\n\n请根据管理员问题和已执行的只读 SQL 结果，输出最终中文回答。"
-                "如果 SQL 被拒绝或报错，请解释原因和下一步建议。不要输出 JSON。"
+                + "\n\n请根据管理员问题和 SQL 执行结果，输出最终中文回答。"
+                "如果写入 SQL committed=true，才可以说明已经提交；如果 SQL 被拒绝、报错或回滚，请解释原因和下一步建议。不要输出 JSON。"
             ),
         }
     ]
@@ -315,6 +456,9 @@ def compact_sql_results(sql_results: list[dict[str, Any]]) -> list[dict[str, Any
                 "status": item.get("status"),
                 "columns": item.get("columns", []),
                 "row_count": item.get("row_count", 0),
+                "operation": item.get("operation"),
+                "table": item.get("table"),
+                "committed": item.get("committed", False),
                 "truncated": item.get("truncated", False),
                 "error": item.get("error"),
                 "rows": item.get("rows", [])[:20],
@@ -330,7 +474,7 @@ def generate_ai_chat_reply(
     api_key: str,
     history: list[AiChatMessage],
 ) -> dict[str, Any]:
-    project_context = build_project_context(db)
+    project_context = build_project_context(db, config)
     plan_messages = build_plan_messages(project_context, history)
     try:
         plan_result = chat_completion(
@@ -349,7 +493,7 @@ def generate_ai_chat_reply(
             response_format={"type": "json_object"},
         )
     plan = parse_plan(plan_result.content)
-    sql_results = execute_plan_sql(db, plan["sql_queries"])
+    sql_results = execute_plan_sql(db, plan["sql_queries"], permissions=ai_chat_sql_permissions(config))
     plan_usage = token_usage_summary(plan_result.usage)
     usage = dict(plan_usage)
     final_usage: dict[str, int] = {}

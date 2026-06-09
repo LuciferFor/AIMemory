@@ -10,6 +10,7 @@ from aimemory.services.ai_chat import (
     parse_plan,
     retry_message_for_empty_plan,
     validate_readonly_sql,
+    validate_sql,
 )
 
 
@@ -90,3 +91,36 @@ def test_validate_readonly_sql_allows_select_and_with() -> None:
 def test_validate_readonly_sql_rejects_unsafe_sql(sql: str) -> None:
     with pytest.raises(AiChatError):
         validate_readonly_sql(sql)
+
+
+def test_validate_sql_allows_enabled_update_on_business_tables() -> None:
+    result = validate_sql(
+        "update memories set title = '新标题' where id = '00000000-0000-0000-0000-000000000000'",
+        {"select": True, "insert": False, "update": True, "delete": False},
+    )
+
+    assert result["operation"] == "update"
+    assert result["table"] == "memories"
+
+
+def test_validate_sql_rejects_disabled_write_permission() -> None:
+    with pytest.raises(AiChatError, match="没有 UPDATE 权限"):
+        validate_sql(
+            "update memories set title = '新标题' where id = '00000000-0000-0000-0000-000000000000'",
+            {"select": True, "insert": False, "update": False, "delete": False},
+        )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "update memories set title = 'x'",
+        "delete from memories",
+        "insert into memories select * from memories",
+        "update api_keys set label = 'x' where id = '00000000-0000-0000-0000-000000000000'",
+        "update llm_provider_configs set model = 'x' where name = 'default'",
+    ],
+)
+def test_validate_sql_rejects_risky_write_sql(sql: str) -> None:
+    with pytest.raises(AiChatError):
+        validate_sql(sql, {"select": True, "insert": True, "update": True, "delete": True})

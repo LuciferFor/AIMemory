@@ -64,6 +64,10 @@ def default_config_values() -> dict[str, Any]:
         "query_analysis_enabled": True,
         "query_analysis_max_output_tokens": 256,
         "query_analysis_timeout_ms": 3000,
+        "ai_chat_allow_select": True,
+        "ai_chat_allow_insert": False,
+        "ai_chat_allow_update": False,
+        "ai_chat_allow_delete": False,
     }
 
 

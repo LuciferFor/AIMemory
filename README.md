@@ -154,8 +154,11 @@ that provider and only write changes after an admin applies each suggestion.
 The same AI configuration powers `/admin/ai-chat`, a ChatGPT-style admin helper
 for project questions, configuration checks, request-log analysis, and database
 inspection. It injects an AIMemory project summary and schema summary on every
-turn. The first version can automatically execute only restricted read-only
-`SELECT` / `WITH ... SELECT` queries, never database writes.
+turn. By default it can execute restricted read-only `SELECT` / `WITH ... SELECT`
+queries. `/admin/ai-settings` can additionally enable guarded `INSERT`,
+`UPDATE`, and `DELETE` permissions for selected AIMemory business tables; writes
+are limited to one statement, non-secret fields, explicit `WHERE` for
+`UPDATE/DELETE`, and a small affected-row cap.
 
 When AI retrieval prompting is enabled in `/admin/ai-settings`, `/v1/memories/context`
 and `/v1/memories/search` first ask the configured OpenAI-compatible model to

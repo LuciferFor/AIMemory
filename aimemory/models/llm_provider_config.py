@@ -25,6 +25,10 @@ class LlmProviderConfig(Base):
     query_analysis_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
     query_analysis_max_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=256, server_default="256")
     query_analysis_timeout_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=3000, server_default="3000")
+    ai_chat_allow_select: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    ai_chat_allow_insert: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    ai_chat_allow_update: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    ai_chat_allow_delete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True),
